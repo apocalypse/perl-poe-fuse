@@ -51,7 +51,7 @@ sub load_yml {
 	if ( $@ ) {
 		plan skip_all => "Unable to load $file => $@";
 	} else {
-		note "Loaded $file, proceeding with analysis";
+		note( "Loaded $file, proceeding with analysis" );
 	}
 
 	# massage the data
