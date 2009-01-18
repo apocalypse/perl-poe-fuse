@@ -10,7 +10,7 @@ use POE::Component::Fuse;
 use base 'POE::Session::AttributeBased';
 
 use Errno qw( :POSIX );		# ENOENT EISDIR etc
-use Fcntl qw( :DEFAULT :mode );	# S_IFREG S_IFDIR, O_SYNC O_LARGEFILE etc.
+use Fcntl qw( :DEFAULT :mode );	# S_IFREG S_IFDIR, O_SYNC O_LARGEFILE etc
 
 my %files = (
 	'/' => {
@@ -69,7 +69,7 @@ sub _default : State {
 }
 
 sub fuse_CLOSED : State {
-	print "FUSE filesystem closed: $_[ARG0]\n";
+	print "shutdown: $_[ARG0]\n";
 	return;
 }
 
@@ -103,17 +103,22 @@ sub fuse_getdir : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
 	print "GETDIR: '$path'\n";
 
-	if ( exists $files{ $path } and $files{ $path }{'type'} & 0040 ) {
-		# construct all the data in this directory
-		my @list = map { $_ =~ s/^$path\/?//; $_ }
-			grep { $_ =~ /^$path\/?[^\/]+$/ } ( keys %files );
+	if ( exists $files{ $path } ) {
+		if ( $files{ $path }{'type'} & 0040 ) {
+			# construct all the data in this directory
+			my @list = map { $_ =~ s/^$path\/?//; $_ }
+				grep { $_ =~ /^$path\/?[^\/]+$/ } ( keys %files );
 
-		# no need to add "." and ".." - FUSE handles it automatically!
+			# no need to add "." and ".." - FUSE handles it automatically!
 
-		# return the list with a success code on the end
-		$postback->( @list, 0 );
+			# return the list with a success code on the end
+			$postback->( @list, 0 );
+		} else {
+			# path is not a directory!
+			$postback->( -ENOTDIR() );
+		}
 	} else {
-		# path does not exist or not a dir!
+		# path does not exist!
 		$postback->( -ENOENT() );
 	}
 
@@ -417,8 +422,8 @@ sub fuse_rmdir : State {
 				$postback->( -ENOTEMPTY() );
 			}
 		} else {
-			# path is a directory!
-			$postback->( -EISDIR() );
+			# path is not a directory!
+			$postback->( -ENOTDIR() );
 		}
 	} else {
 		# path does not exist

@@ -57,52 +57,62 @@ sub spawn {
 		# TODO validate for sanity
 	}
 
-	# setup the FUSE mount options
-	if ( ! exists $opt{'mountopts'} or ! defined $opt{'mountopts'} ) {
+	# are we using a Filesys::Virtual object?
+	if ( ! exists $opt{'vfilesys'} or ! defined $opt{'vfilesys'} ) {
 		if ( DEBUG ) {
-			warn 'Using default MOUNTOPTS = undef';
+			warn 'Using default VFILESYS = false';
 		}
 
-		# Set the default
-		$opt{'mountopts'} = undef;
-	} else {
-		# TODO validate for sanity
-	}
-
-	# setup the callback prefix
-	if ( ! exists $opt{'prefix'} or ! defined $opt{'prefix'} ) {
-		if ( DEBUG ) {
-			warn 'Using default PREFIX = fuse_';
-		}
-
-		# Set the default
-		$opt{'prefix'} = 'fuse_';
-	} else {
-		# TODO validate for sanity
-	}
-
-	# setup the session
-	if ( ! exists $opt{'session'} or ! defined $opt{'session'} ) {
-		# if we're running under POE, grab the active session
-		$opt{'session'} = $poe_kernel->get_active_session();
-		if ( ! defined $opt{'session'} or $opt{'session'}->isa( 'POE::Kernel' ) ) {
-			die 'We need a session to send the callbacks to!';
+		# setup the session
+		if ( ! exists $opt{'session'} or ! defined $opt{'session'} ) {
+			# if we're running under POE, grab the active session
+			$opt{'session'} = $poe_kernel->get_active_session();
+			if ( ! defined $opt{'session'} or $opt{'session'}->isa( 'POE::Kernel' ) ) {
+				die 'We need a session to send the callbacks to!';
+			} else {
+				$opt{'session'} = $opt{'session'}->ID();
+			}
 		} else {
-			$opt{'session'} = $opt{'session'}->ID();
+			# TODO validate for sanity
+		}
+
+		# setup the callback prefix
+		if ( ! exists $opt{'prefix'} or ! defined $opt{'prefix'} ) {
+			if ( DEBUG ) {
+				warn 'Using default event PREFIX = fuse_';
+			}
+
+			# Set the default
+			$opt{'prefix'} = 'fuse_';
+		} else {
+			# TODO validate for sanity
 		}
 	} else {
-		# TODO validate for sanity
+		# make sure it's a real object
+		if ( ! ref $opt{'vfilesys'} or ! $opt{'vfilesys'}->isa( 'Filesys::Virtual' ) ) {
+			die 'The passed-in vfilesys object is not a subclass of Filesys::Virtual!';
+		}
+
+		# warn user if they tried to use both vfilesys+session
+		if ( exists $opt{'session'} and defined $opt{'session'} ) {
+			warn 'Setting both VFILESYS+SESSION will not work, choosing VFILESYS over SESSION!';
+		}
+		delete $opt{'session'} if exists $opt{'session'};
+
+		# Wrap the vfilesys object around our own FUSE <-> Filesys::Virtual wrapper
+		require POE::Component::Fuse::FsV;
+		$opt{'vfilesys'} = POE::Component::Fuse::FsV->new( $opt{'vfilesys'} );
 	}
 
 	# should we automatically umount?
-	if ( exists $opt{'umount'} and defined $opt{'umount'} ) {
-		$opt{'umount'} = $opt{'umount'} ? 1 : 0;
+	if ( exists $opt{'autoumount'} ) {
+		$opt{'autoumount'} = $opt{'autoumount'} ? 1 : 0;
 	} else {
 		if ( DEBUG ) {
-			warn 'Using default UMOUNT = false';
+			warn 'Using default AUTOUMOUNT = false';
 		}
 
-		$opt{'umount'} = 0;
+		$opt{'autoumount'} = 0;
 	}
 
 	# verify the mountpoint
@@ -117,11 +127,57 @@ sub spawn {
 		# TODO validate for sanity
 	}
 
+	# setup the FUSE mount options
+	if ( ! exists $opt{'mountopts'} or ! defined $opt{'mountopts'} ) {
+		if ( DEBUG ) {
+			warn 'Using default MOUNTOPTS = undef';
+		}
+
+		# Set the default
+		$opt{'mountopts'} = undef;
+	} else {
+		# TODO validate for sanity
+	}
+
+	# should we automatically create the mountpoint?
+	if ( exists $opt{'automkdir'} ) {
+		$opt{'automkdir'} = $opt{'automkdir'} ? 1 : 0;
+	} else {
+		if ( DEBUG ) {
+			warn 'Using default AUTOMKDIR = true';
+		}
+
+		# set the default
+		$opt{'automkdir'} = 1;
+	}
+
 	# make sure the mountpoint exists
 	if ( ! -d $opt{'mount'} ) {
-		# gaah, just let the caller know
-		$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Mountpoint at ' . $opt{'mount'} . ' does not exist!' );
-		return;
+		# does it exist?
+		if ( -e _ ) {
+			# gaah, just let the caller know
+			if ( exists $opt{'session'} ) {
+				$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Mountpoint at ' . $opt{'mount'} . ' is not a directory!' );
+			}
+			return;
+		} else {
+			# should we try to create it?
+			if ( $opt{'automkdir'} ) {
+				if ( ! mkdir( $opt{'mount'} ) ) {
+					# gaah, just let the caller know
+					if ( exists $opt{'session'} ) {
+						$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Unable to create directory at ' . $opt{'mount'} . ' - ' . $! );
+					}
+					return;
+				}
+			} else {
+				# gaah, just let the caller know
+				if ( exists $opt{'session'} ) {
+					$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Mountpoint at ' . $opt{'mount'} . ' does not exist!' );
+				}
+				return;
+			}
+		}
 	}
 
 	# Create our session
@@ -131,18 +187,17 @@ sub spawn {
 			'ALIAS'		=> $opt{'alias'},
 			'MOUNT'		=> $opt{'mount'},
 			'MOUNTOPTS'	=> $opt{'mountopts'},
-			'UMOUNT'	=> $opt{'umount'},
-			'PREFIX'	=> $opt{'prefix'},
-			'SESSION'	=> $opt{'session'},
+			'AUTOUMOUNT'	=> $opt{'autoumount'},
+			( exists $opt{'session'} ? (	'PREFIX'	=> $opt{'prefix'},
+							'SESSION'	=> $opt{'session'},
+						) : (	'VFILESYS'	=> $opt{'vfilesys'}, )
+			),
 
 			# The Wheel::Run object
 			'WHEEL'		=> undef,
 
 			# Are we shutting down?
 			'SHUTDOWN'	=> 0,
-
-			# are we processing requests?
-			'PENDINGREQS'	=> 0,
 		},
 	);
 
@@ -162,7 +217,9 @@ sub _start : State {
 	$_[KERNEL]->yield( 'wheel_setup' );
 
 	# increment the refcount for calling session
-	$_[KERNEL]->refcount_increment( $_[HEAP]->{'SESSION'}, 'fuse' );
+	if ( exists $_[HEAP]->{'SESSION'} ) {
+		$_[KERNEL]->refcount_increment( $_[HEAP]->{'SESSION'}, 'fuse' );
+	}
 
 	return;
 }
@@ -196,18 +253,21 @@ sub shutdown : State {
 		undef $_[HEAP]->{'WHEEL'};
 	}
 
-	# decrement the refcount for calling session
-	$_[KERNEL]->refcount_decrement( $_[HEAP]->{'SESSION'}, 'fuse' );
+	# Do we have a session to inform?
+	if ( exists $_[HEAP]->{'SESSION'} ) {
+		# decrement the refcount for calling session
+		$_[KERNEL]->refcount_decrement( $_[HEAP]->{'SESSION'}, 'fuse' );
 
-	# let it know we shutdown
-	if ( exists $_[HEAP]->{'ERROR'} ) {
-		$_[KERNEL]->call( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . 'CLOSED', $_[HEAP]->{'ERROR'} );
-	} else {
-		$_[KERNEL]->call( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . 'CLOSED', 'shutdown' );
+		# let it know we shutdown
+		if ( exists $_[HEAP]->{'ERROR'} ) {
+			$_[KERNEL]->call( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . 'CLOSED', $_[HEAP]->{'ERROR'} );
+		} else {
+			$_[KERNEL]->call( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . 'CLOSED', 'shutdown' );
+		}
 	}
 
 	# FIXME fire off the "fusermount -u /mnt/point" so we umount sanely
-	if ( $_[HEAP]->{'UMOUNT'} ) {
+	if ( $_[HEAP]->{'AUTOUMOUNT'} ) {
 		# blah
 	}
 
@@ -345,12 +405,19 @@ sub wheel_stdout : State {
 
 		# TODO generate some way of matching request with response when we go multithreaded...
 
-		# make the postback
-		my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'} );
-		$_[HEAP]->{'PENDINGREQS'}++;
+		# vfilesys or session?
+		if ( exists $_[HEAP]->{'SESSION'} ) {
+			# make the postback
+			my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'} );
 
-		# send it to the session!
-		$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
+			# send it to the session!
+			$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
+		} else {
+			# send it to the wrapper!
+			my $subname = "fuse_" . $data->{'TYPE'};
+			my @result = $_[HEAP]->{'VFILESYS'}->$subname->( $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
+			$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'} ], \@result );
+		}
 	} else {
 		if ( DEBUG ) {
 			warn "received malformed input from subprocess";
@@ -390,9 +457,6 @@ sub reply : State {
 		}
 	}
 
-	# we're done with this request!
-	$_[HEAP]->{'PENDINGREQS'}--;
-
 	return;
 }
 
@@ -411,6 +475,9 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 	use POE qw( Component::Fuse );
 	use base 'POE::Session::AttributeBased';
 
+	# constants we need to interact with FUSE
+	use Errno qw( :POSIX );		# ENOENT EISDIR etc
+
 	my %files = (
 		'/' => {	# a directory
 			type => 0040,
@@ -418,9 +485,8 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 			ctime => time()-1000,
 		},
 		'/a' => {	# a file
-			cont => "File 'a'.\n",
 			type => 0100,
-			mode => 0755,
+			mode => 0644,
 			ctime => time()-2000,
 		},
 		'/foo' => {	# a directory
@@ -429,7 +495,6 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 			ctime => time()-3000,
 		},
 		'/foo/bar' => {	# a file
-			cont => "APOCAL is the best!\nJust kidding :)",
 			type => 0100,
 			mode => 0755,
 			ctime => time()-4000,
@@ -446,6 +511,8 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 	sub _start : State {
 		# create the fuse session
 		POE::Component::Fuse->spawn;
+		print "Check us out at the default place: /tmp/poefuse\n";
+		print "You can do directory listings, but no I/O operations are supported!\n";
 	}
 	sub _child : State {
 		return;
@@ -455,7 +522,7 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 	}
 
 	sub fuse_CLOSED : State {
-		print "FUSE filesystem closed: $_[ARG0]\n";
+		print "shutdown: $_[ARG0]\n";
 		return;
 	}
 
@@ -482,19 +549,23 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 
 	sub fuse_getdir : State {
 		my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-		print "GETDIR: '$path'\n";
 
-		if ( exists $files{ $path } and $files{ $path }{'type'} & 0040 ) {
-			# construct all the data in this directory
-			my @list = map { $_ =~ s/^$path\/?//; $_ }
-				grep { $_ =~ /^$path\/?[^\/]+$/ } ( keys %files );
+		if ( exists $files{ $path } ) {
+			if ( $files{ $path }{'type'} & 0040 ) {
+				# construct all the data in this directory
+				my @list = map { $_ =~ s/^$path\/?//; $_ }
+					grep { $_ =~ /^$path\/?[^\/]+$/ } ( keys %files );
 
-			# no need to add "." and ".." - FUSE handles it automatically!
+				# no need to add "." and ".." - FUSE handles it automatically!
 
-			# return the list with a success code on the end
-			$postback->( @list, 0 );
+				# return the list with a success code on the end
+				$postback->( @list, 0 );
+			} else {
+				# path is not a directory!
+				$postback->( -ENOTDIR() );
+			}
 		} else {
-			# path does not exist or not a dir!
+			# path does not exist!
 			$postback->( -ENOENT() );
 		}
 
@@ -528,6 +599,8 @@ None.
 L<POE>
 
 L<Fuse>
+
+L<Filesys::Virtual>
 
 =head1 SUPPORT
 
