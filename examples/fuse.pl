@@ -55,19 +55,6 @@ sub _stop : State {
 	return;
 }
 
-sub _default : State {
-	my( $event, $args ) = @_[ ARG0, ARG1 ];
-
-	if ( defined $args ) {
-		@$args = map { defined $_ ? $_ : 'UNDEF' } @$args;
-		print "DEFAULT: $event -> " . join( ", ", @$args ) . "\n";
-	} else {
-		print "DEFAULT: $event\n";
-	}
-
-	return;
-}
-
 sub fuse_CLOSED : State {
 	print "shutdown: $_[ARG0]\n";
 	return;
@@ -534,7 +521,7 @@ sub fuse_utime : State {
 	return;
 }
 
-# copied from Fuse::Simple
+# copied from Fuse::Simple, thanks!
 sub dump_open_flags {
     my $flags = shift;
 
