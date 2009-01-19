@@ -1,5 +1,4 @@
 #!/usr/bin/perl
-# shamelessly adapted from Fuse.pm's examples/example.pl
 use strict; use warnings;
 
 # uncomment this to have debugging
