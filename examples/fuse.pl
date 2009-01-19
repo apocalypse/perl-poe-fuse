@@ -1,5 +1,7 @@
 #!/usr/bin/perl
-# shamelessly adapted from Fuse.pm's examples/example.pl
+# shamelessly adapted+expanded from Fuse.pm's examples/example.pl
+# hmpf, using nano works fine but vi bombs out with this!
+# must be some file mode thingy, have to investigate later... :)
 use strict; use warnings;
 
 # uncomment this to have debugging
@@ -54,7 +56,7 @@ sub _start : State {
 	# create the fuse session
 	POE::Component::Fuse->spawn;
 	print "Check us out at the default place: /tmp/poefuse\n";
-	print "This is an entirely in-memory filesystem.\n";
+	print "This is an entirely in-memory filesystem, some things might not work.\n";
 }
 
 sub _child : State {
@@ -71,7 +73,7 @@ sub fuse_CLOSED : State {
 
 sub fuse_getattr : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "GETATTR: '$path'\n";
+	#print "GETATTR: '$path'\n";
 
 	if ( exists $files{ $path } ) {
 		my $size = exists( $files{ $path }{'cont'} ) ? length( $files{ $path }{'cont'} ) : 0;
@@ -97,7 +99,7 @@ sub fuse_getattr : State {
 
 sub fuse_readlink : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "READLINK: '$path'\n";
+	#print "READLINK: '$path'\n";
 
 	# we don't have any link support
 	$postback->( -ENOSYS() );
@@ -107,7 +109,7 @@ sub fuse_readlink : State {
 
 sub fuse_getdir : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "GETDIR: '$path'\n";
+	#print "GETDIR: '$path'\n";
 
 	if ( exists $files{ $path } ) {
 		if ( $files{ $path }{'type'} & 0040 ) {
@@ -133,7 +135,7 @@ sub fuse_getdir : State {
 
 sub fuse_getxattr : State {
 	my( $postback, $context, $path, $attr ) = @_[ ARG0 .. ARG3 ];
-	print "GETXATTR: '$path' - '$attr'\n";
+	#print "GETXATTR: '$path' - '$attr'\n";
 
 	# we don't have any extended attribute support
 	$postback->( 0 );
@@ -143,7 +145,7 @@ sub fuse_getxattr : State {
 
 sub fuse_setxattr : State {
 	my( $postback, $context, $path, $attr, $value, $flags ) = @_[ ARG0 .. ARG5 ];
-	print "SETXATTR: '$path' - '$attr' - '$value' - '$flags'\n";
+	#print "SETXATTR: '$path' - '$attr' - '$value' - '$flags'\n";
 
 	# we don't have any extended attribute support
 	$postback->( -ENOSYS() );
@@ -153,7 +155,7 @@ sub fuse_setxattr : State {
 
 sub fuse_listxattr : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "LISTXATTR: '$path'\n";
+	#print "LISTXATTR: '$path'\n";
 
 	# we don't have any extended attribute support
 	$postback->( 0 );
@@ -163,7 +165,7 @@ sub fuse_listxattr : State {
 
 sub fuse_removexattr : State {
 	my( $postback, $context, $path, $attr ) = @_[ ARG0 .. ARG3 ];
-	print "REMOVEXATTR: '$path' - '$attr'\n";
+	#print "REMOVEXATTR: '$path' - '$attr'\n";
 
 	# we don't have any extended attribute support
 	$postback->( 0 );
@@ -173,7 +175,7 @@ sub fuse_removexattr : State {
 
 sub fuse_open : State {
 	my( $postback, $context, $path, $flags ) = @_[ ARG0 .. ARG3 ];
-	print "OPEN: '$path' - " . dump_open_flags( $flags );
+	#print "OPEN: '$path' - " . dump_open_flags( $flags );
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -193,7 +195,7 @@ sub fuse_open : State {
 
 sub fuse_read : State {
 	my( $postback, $context, $path, $size, $offset ) = @_[ ARG0 .. ARG4 ];
-	print "READ: '$path' - '$size' - '$offset'\n";
+	#print "READ: '$path' - '$size' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -225,7 +227,7 @@ sub fuse_read : State {
 
 sub fuse_flush : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "FLUSH: '$path'\n";
+	#print "FLUSH: '$path'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -245,7 +247,7 @@ sub fuse_flush : State {
 
 sub fuse_release : State {
 	my( $postback, $context, $path, $flags ) = @_[ ARG0 .. ARG3 ];
-	print "RELEASE: '$path' - " . dump_open_flags( $flags );
+	#print "RELEASE: '$path' - " . dump_open_flags( $flags );
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -265,7 +267,7 @@ sub fuse_release : State {
 
 sub fuse_truncate : State {
 	my( $postback, $context, $path, $offset ) = @_[ ARG0 .. ARG3 ];
-	print "TRUNCATE: '$path' - '$offset'\n";
+	#print "TRUNCATE: '$path' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -298,7 +300,7 @@ sub fuse_truncate : State {
 
 sub fuse_write : State {
 	my( $postback, $context, $path, $buffer, $offset ) = @_[ ARG0 .. ARG4 ];
-	print "WRITE: '$path' - '" . length( $buffer ) . "' - '$offset'\n";
+	#print "WRITE: '$path' - '" . length( $buffer ) . "' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -333,7 +335,7 @@ sub fuse_mknod : State {
 	# FIXME this seems to also screw up the S_ISREG() stuff, have to investigate more...
 	$modes = $modes & 000777;
 
-	print "MKNOD: '$path' - '" . sprintf( "%04o", $modes ) . "' - '$device'\n";
+	#print "MKNOD: '$path' - '" . sprintf( "%04o", $modes ) . "' - '$device'\n";
 
 	if ( exists $files{ $path } or $path eq '.' or $path eq '..' ) {
 		# already exists!
@@ -364,7 +366,7 @@ sub fuse_mknod : State {
 
 sub fuse_mkdir : State {
 	my( $postback, $context, $path, $modes ) = @_[ ARG0 .. ARG3 ];
-	print "MKDIR: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
+	#print "MKDIR: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
 
 	if ( exists $files{ $path } ) {
 		# already exists!
@@ -389,7 +391,7 @@ sub fuse_mkdir : State {
 
 sub fuse_unlink : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "UNLINK: '$path'\n";
+	#print "UNLINK: '$path'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -412,7 +414,7 @@ sub fuse_unlink : State {
 
 sub fuse_rmdir : State {
 	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
-	print "RMDIR: '$path'\n";
+	#print "RMDIR: '$path'\n";
 
 	if ( exists $files{ $path } ) {
 		if ( $files{ $path }{'type'} & 0040 ) {
@@ -441,7 +443,7 @@ sub fuse_rmdir : State {
 
 sub fuse_symlink : State {
 	my( $postback, $context, $path, $symlink ) = @_[ ARG0 .. ARG3 ];
-	print "SYMLINK: '$path' - '$symlink'\n";
+	#print "SYMLINK: '$path' - '$symlink'\n";
 
 	# we simply don't support this operation because it would be too complicated for this "basic" script, ha!
 	$postback->( -ENOSYS() );
@@ -451,7 +453,7 @@ sub fuse_symlink : State {
 
 sub fuse_rename : State {
 	my( $postback, $context, $path, $newpath ) = @_[ ARG0 .. ARG3 ];
-	print "RENAME: '$path' - '$newpath'\n";
+	#print "RENAME: '$path' - '$newpath'\n";
 
 	if ( exists $files{ $path } ) {
 		if ( ! exists $files{ $newpath } ) {
@@ -476,7 +478,7 @@ sub fuse_rename : State {
 
 sub fuse_link : State {
 	my( $postback, $context, $path, $hardlink ) = @_[ ARG0 .. ARG3 ];
-	print "HARDLINK: '$path' - '$hardlink'\n";
+	#print "LINK: '$path' - '$hardlink'\n";
 
 	# we simply don't support this operation because it would be too complicated for this "basic" script, ha!
 	$postback->( -ENOSYS() );
@@ -486,7 +488,7 @@ sub fuse_link : State {
 
 sub fuse_chmod : State {
 	my( $postback, $context, $path, $modes ) = @_[ ARG0 .. ARG3 ];
-	print "CHMOD: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
+	#print "CHMOD: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
 
 	if ( exists $files{ $path } ) {
 		# okay, update the mode!
@@ -504,7 +506,7 @@ sub fuse_chmod : State {
 
 sub fuse_chown : State {
 	my( $postback, $context, $path, $uid, $gid ) = @_[ ARG0 .. ARG4 ];
-	print "CHOWN: '$path' - '$uid' - '$gid'\n";
+	#print "CHOWN: '$path' - '$uid' - '$gid'\n";
 
 	if ( exists $files{ $path } ) {
 		# okay, update the ownerships!!
@@ -523,7 +525,7 @@ sub fuse_chown : State {
 
 sub fuse_utime : State {
 	my( $postback, $context, $path, $atime, $mtime ) = @_[ ARG0 .. ARG4 ];
-	print "UTIME: '$path' - '$atime' - '$mtime'\n";
+	#print "UTIME: '$path' - '$atime' - '$mtime'\n";
 
 	if ( exists $files{ $path } ) {
 		# okay, update the time
@@ -542,6 +544,7 @@ sub fuse_utime : State {
 
 sub fuse_statfs : State {
 	my( $postback, $context ) = @_[ ARG0, ARG1 ];
+	#print "STATFS\n";
 
 	# This is a fake filesystem, so return fake data ;)
 	# $namelen, $files, $files_free, $blocks, $blocks_avail, $blocksize
@@ -552,7 +555,7 @@ sub fuse_statfs : State {
 
 sub fuse_fsync : State {
 	my( $postback, $context, $path, $fsync_mode ) = @_[ ARG0 .. ARG3 ];
-	print "FSYNC: '$path' - '$fsync_mode'\n";
+	#print "FSYNC: '$path' - '$fsync_mode'\n";
 
 	# we don't do anything that requires us to do this, so success!
 	$postback->( 0 );

@@ -13,6 +13,9 @@ use POE::Wheel::Run;
 use POE::Filter::Reference;
 use base 'POE::Session::AttributeBased';
 
+# get some system constants
+use Errno qw( :POSIX );		# ENOENT EISDIR etc
+
 # Set some constants
 BEGIN {
 	# Debug fun!
@@ -36,7 +39,8 @@ sub spawn {
 	} else {
 		# Sanity checking
 		if ( @_ & 1 ) {
-			die 'POE::Component::Fuse requires an even number of options passed to spawn()';
+			warn 'PoCo-Fuse requires an even number of options passed to spawn()';
+			return 0;
 		}
 
 		%opt = @_;
@@ -68,7 +72,8 @@ sub spawn {
 			# if we're running under POE, grab the active session
 			$opt{'session'} = $poe_kernel->get_active_session();
 			if ( ! defined $opt{'session'} or $opt{'session'}->isa( 'POE::Kernel' ) ) {
-				die 'We need a session to send the callbacks to!';
+				warn 'PoCo-Fuse needs a session to send the callbacks to!';
+				return 0;
 			} else {
 				$opt{'session'} = $opt{'session'}->ID();
 			}
@@ -90,7 +95,8 @@ sub spawn {
 	} else {
 		# make sure it's a real object
 		if ( ! ref $opt{'vfilesys'} or ! $opt{'vfilesys'}->isa( 'Filesys::Virtual' ) ) {
-			die 'The passed-in vfilesys object is not a subclass of Filesys::Virtual!';
+			warn 'The passed-in vfilesys object is not a subclass of Filesys::Virtual!';
+			return 0;
 		}
 
 		# warn user if they tried to use both vfilesys+session
@@ -105,14 +111,14 @@ sub spawn {
 	}
 
 	# should we automatically umount?
-	if ( exists $opt{'autoumount'} ) {
-		$opt{'autoumount'} = $opt{'autoumount'} ? 1 : 0;
+	if ( exists $opt{'umount'} ) {
+		$opt{'umount'} = $opt{'umount'} ? 1 : 0;
 	} else {
 		if ( DEBUG ) {
-			warn 'Using default AUTOUMOUNT = false';
+			warn 'Using default UMOUNT = false';
 		}
 
-		$opt{'autoumount'} = 0;
+		$opt{'umount'} = 0;
 	}
 
 	# verify the mountpoint
@@ -140,15 +146,15 @@ sub spawn {
 	}
 
 	# should we automatically create the mountpoint?
-	if ( exists $opt{'automkdir'} ) {
-		$opt{'automkdir'} = $opt{'automkdir'} ? 1 : 0;
+	if ( exists $opt{'mkdir'} ) {
+		$opt{'mkdir'} = $opt{'mkdir'} ? 1 : 0;
 	} else {
 		if ( DEBUG ) {
-			warn 'Using default AUTOMKDIR = true';
+			warn 'Using default MKDIR = false';
 		}
 
 		# set the default
-		$opt{'automkdir'} = 1;
+		$opt{'mkdir'} = 0;
 	}
 
 	# make sure the mountpoint exists
@@ -159,23 +165,32 @@ sub spawn {
 			if ( exists $opt{'session'} ) {
 				$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Mountpoint at ' . $opt{'mount'} . ' is not a directory!' );
 			}
-			return;
+			if ( DEBUG ) {
+				warn 'Mountpoint at ' . $opt{'mount'} . ' is not a directory!';
+			}
+			return 0;
 		} else {
 			# should we try to create it?
-			if ( $opt{'automkdir'} ) {
+			if ( $opt{'mkdir'} ) {
 				if ( ! mkdir( $opt{'mount'} ) ) {
 					# gaah, just let the caller know
 					if ( exists $opt{'session'} ) {
 						$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Unable to create directory at ' . $opt{'mount'} . ' - ' . $! );
 					}
-					return;
+					if ( DEBUG ) {
+						warn 'Unable to create directory at ' . $opt{'mount'} . ' - ' . $!;
+					}
+					return 0;
 				}
 			} else {
 				# gaah, just let the caller know
 				if ( exists $opt{'session'} ) {
 					$poe_kernel->post( $opt{'session'}, $opt{'prefix'} . 'CLOSED', 'Mountpoint at ' . $opt{'mount'} . ' does not exist!' );
 				}
-				return;
+				if ( DEBUG ) {
+					warn 'Mountpoint at ' . $opt{'mount'} . ' does not exist!';
+				}
+				return 0;
 			}
 		}
 	}
@@ -187,7 +202,7 @@ sub spawn {
 			'ALIAS'		=> $opt{'alias'},
 			'MOUNT'		=> $opt{'mount'},
 			'MOUNTOPTS'	=> $opt{'mountopts'},
-			'AUTOUMOUNT'	=> $opt{'autoumount'},
+			'UMOUNT'	=> $opt{'umount'},
 			( exists $opt{'session'} ? (	'PREFIX'	=> $opt{'prefix'},
 							'SESSION'	=> $opt{'session'},
 						) : (	'VFILESYS'	=> $opt{'vfilesys'}, )
@@ -201,7 +216,8 @@ sub spawn {
 		},
 	);
 
-	return;
+	# return success
+	return 1;
 }
 
 # This starts the component
@@ -228,6 +244,13 @@ sub _start : State {
 sub _stop : State {
 	if ( DEBUG ) {
 		warn 'Stopping alias "' . $_[HEAP]->{'ALIAS'} . '"';
+	}
+
+	# fire off the umount command
+	if ( $_[HEAP]->{'UMOUNT'} ) {
+		# FIXME this is bad because it blocks POE but a good temporary solution :(
+		# FIXME make this portable!
+		system("fusermount -u -z $_[HEAP]->{'ALIAS'} >/dev/null 2>&1");
 	}
 
 	return;
@@ -264,11 +287,6 @@ sub shutdown : State {
 		} else {
 			$_[KERNEL]->call( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . 'CLOSED', 'shutdown' );
 		}
-	}
-
-	# FIXME fire off the "fusermount -u /mnt/point" so we umount sanely
-	if ( $_[HEAP]->{'AUTOUMOUNT'} ) {
-		# blah
 	}
 
 	return;
@@ -376,6 +394,7 @@ sub wheel_close : State {
 	}
 
 	# arg, cleanup!
+	undef $_[HEAP]->{'WHEEL'};
 	$_[KERNEL]->call( $_[SESSION], 'shutdown' );
 
 	return;
@@ -419,7 +438,7 @@ sub wheel_stdout : State {
 			if ( defined $subname ) {
 				@result = $subname->( $_[HEAP]->{'VFILESYS'}, @{ $data->{'ARGS'} } );
 			} else {
-				@result = ( 0 );	# FIXME: change to EPERM or something
+				@result = ( -EIO() );
 			}
 			$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'} ], \@result );
 		}
@@ -517,12 +536,20 @@ POE::Component::Fuse - Using FUSE in POE asynchronously
 		# create the fuse session
 		POE::Component::Fuse->spawn;
 		print "Check us out at the default place: /tmp/poefuse\n";
-		print "You can do directory listings, but no I/O operations are supported!\n";
+		print "You can navigate the directory, but no I/O operations are supported!\n";
 	}
 	sub _child : State {
 		return;
 	}
 	sub _stop : State {
+		return;
+	}
+
+	# return unimplemented for the rest of the FUSE api
+	sub _default : State {
+		if ( $_[ARG0] =~ /^fuse/ ) {
+			$_[ARG1]->[0]->( -ENOSYS() );
+		}
 		return;
 	}
 
@@ -593,7 +620,191 @@ this module as a simple wrapper around L<Fuse> to POEify it.
 
 =head1 DESCRIPTION
 
-MISSING! ALERT ALERT ALERT!
+This module allows you to use FUSE filesystems in POE. Basically, it is a wrapper around L<Fuse> and exposes
+it's API via events. Furthermore, you can use L<Filesys::Virtual> to handle the filesystem.
+
+The standard way to use this module is to do this:
+
+	use POE;
+	use POE::Component::Fuse;
+
+	POE::Component::Fuse->spawn( ... );
+
+	POE::Session->create( ... );
+
+	POE::Kernel->run();
+
+Naturally, the best way to quickly get up to speed is to study other implementations of FUSE to see what
+they have done. Furthermore, please look at the scripts in the examples/ directory in the tarball!
+
+=head2 Starting Fuse
+
+To start Fuse, just call it's spawn method:
+
+	POE::Component::Fuse->spawn( ... );
+
+This method will return failure on errors or return success.
+
+NOTE: The act of starting/stopping PoCo-Fuse fires off _child events, read the POE documentation on
+what to do with them :)
+
+This constructor accepts either a hashref or a hash, valid options are:
+
+=head3 alias
+
+This sets the session alias in POE.
+
+The default is: "fuse"
+
+=head3 mount
+
+This sets the mountpoint for FUSE.
+
+If this mountpoint doesn't exist ( and the "mkdir" option isn't set ) spawn() will return failure.
+
+The default is: "/tmp/poefuse"
+
+=head3 mountoptions
+
+This passes the options to FUSE for mounting.
+
+NOTE: this is a comma-separated string!
+
+The default is: undef
+
+=head3 mkdir
+
+If true, PoCo-Fuse will attempt to mkdir the mountpoint if it doesn't exist.
+
+If the mkdir attempt fails, spawn() will return failure.
+
+The default is: false
+
+=head3 umount
+
+If true, PoCo-Fuse will attempt to umount the filesystem on exit/shutdown.
+
+This basically calls "fusermount -u -z $mountpoint"
+
+WARNING: This is not exactly portable and is in the testing stage. Feedback would be much appreciated!
+
+The default is: false
+
+=head3 prefix
+
+The prefix for all events generated by this module when using the "session" method.
+
+The default is: "fuse_"
+
+=head3 session
+
+The session to send all FUSE events to. Used in conjunction with the "prefix" option, you can control
+where the events arrive.
+
+If this option is missing ( or POE is not running ) and "vfilesys" isn't enabled spawn() will return failure.
+
+NOTE: You cannot use this and "vfilesys" at the same time! PoCo-Fuse will pick vfilesys over this!
+
+The default is: calling session ( if POE is running )
+
+=head3 vfilesys
+
+The Filesys::Virtual object to use as our filesystem. PoCo-Fuse will proceed to use L<Fuse::Filesys::Virtual>
+to wrap around it and process the events internally.
+
+If this option is missing and "session" isn't enabled spawn() will return failure.
+
+NOTE: You cannot use this and "session" at the same time! PoCo-Fuse will pick this over session!
+
+Compatibility has not been tested with all Filesys::Virtual::XYZ subclasses, so please let me know if some isn't
+working properly! Furthermore, this doesn't support the "new" Filesys::Virtual::Async API! PoCo-Fuse will do an
+$obj->isa( 'Filesys::Virtual' ) check before accepting the object or return failure if it isn't a subclass.
+
+The default is: not used
+
+=head2 Commands
+
+There is only one command you can use, because this module does nothing except process FUSE events.
+
+=head3 shutdown
+
+Tells this module to kill the FUSE mount and terminates the session. Due to the semantics of FUSE, this
+will often result in a wedged filesystem. You would need to either umount it manually ( via "fusermount -u $mount" )
+or by enabling the "umount" option.
+
+=head2 Events
+
+If you aren't using the Filesys::Virtual interface, the FUSE api will be exposed to you in it's glory via
+events to your session. You can process them, and send the data back via the supplied postback. All the arguments
+are identical to the one in L<Fuse> so please take a good look at that module for more information!
+
+The only place where this differs is the additional arguments. All events will receive 2 extra arguments in front
+of the standard FUSE args. They are the postback and context info. The postback is self-explanatory, you
+supply the return data to it and it'll fire an event back to PoCo-Fuse for processing. The context is the
+calling context received from FUSE. It is a hashref with the 3 keys in it: uid, gid, pid. It is received via
+the fuse_get_context() sub from L<Fuse>.
+
+Remember that the events are the fuse methods with the prefix tacked on to them. A typical FUSE handler would
+look something like the example below. ( it is sugared via POE::Session::AttributeBased hah )
+
+	sub fuse_getdir : State {
+		my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
+
+		# somehow get our data, we fake it here for instructional reasons
+		$postback->( 'foo', 'bar', 0 );
+		return;
+	}
+
+Again, pretty please read the L<Fuse> documentation for all the events you can receive. Here's the list
+as of Fuse v0.09: getattr readlink getdir mknod mkdir unlink rmdir symlink rename link chmod chown truncate
+utime open read write statfs flush release fsync setxattr getxattr listxattr removexattr.
+
+=head3 CLOSED
+
+This is a special event sent to the session notifying it of component shutdown. As usual, it will be prefixed by the
+prefix set in the options. If you are using the vfilesys option, this will not be sent anywhere.
+
+The event handler will get one argument, the error string. If you shut down the component, it will be "shutdown",
+otherwise it will contain some error string. A sample handler is below.
+
+	sub fuse_CLOSED : State {
+		my $error = $_[ARG0];
+		if ( $error ne 'shutdown' ) {
+			print "AIEE: $error\n";
+
+			# do some actions like emailing the sysadmin, restarting the component, etc...
+		} else {
+			# we told it to shutdown, so what do we want to do next?
+		}
+
+		return;
+	}
+
+=head2 Internals
+
+=head3 XSification
+
+This module does it's magic by spawning a subprocess via Wheel::Run and passing events back and forth to
+the L<Fuse> module loaded in it. This isn't exactly optimal which is obvious, but it works perfectly!
+
+I'm working on improving this by using XS but it will take me some time seeing how I'm a n00b :( Furthermore,
+FUSE doesn't really help because I have to figure out how to get at the filehandle buried deep in it and expose
+it to POE...
+
+If anybody have the time and knowledge, please help me out and we can have fun converting this to XS!
+
+=head3 Filesys::Virtual::Async
+
+While the current implementation works nicely, it is acknowledged that there's potential for blockage when
+using the L<Filesys::Virtual> modules. For example, if you use L<Filesys::Virtual::SSH> every time you
+access something, it will make a SSH call over the wire. This will block the entire process until it returns!
+
+Xantus informed me that there's work going on in the async department and it will rectify this problem. The
+nice thing is that you can easily use the event-based API this module exposes and hook it up to the ::Async
+modules. This means in the future, using L<Filesys::Virtual::Async::SSH> should not block because of the magic
+of callbacks, yay! The design of this module ( by using postbacks ) already nicely accomodates this and all
+that remains is to write the event <-> object wrapper once ::Async gets off the ground :) This would be called
+something like L<Fuse::Filesys::Virtual::Async> or so...
 
 =head1 EXPORT
 
@@ -607,13 +818,15 @@ L<Fuse>
 
 L<Filesys::Virtual>
 
+L<Fuse::Filesys::Virtual>
+
 =head1 SUPPORT
 
 You can find documentation for this module with the perldoc command.
 
     perldoc POE::Component::Fuse
 
-You can also look for information at:
+=head2 Websites
 
 =over 4
 
@@ -634,6 +847,12 @@ L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=POE-Component-Fuse>
 L<http://search.cpan.org/dist/POE-Component-Fuse>
 
 =back
+
+=head2 Bugs
+
+Please report any bugs or feature requests to C<bug-poe-component-fuse at rt.cpan.org>, or through
+the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=POE-Component-Fuse>.  I will be
+notified, and then you'll automatically be notified of progress on your bug as I make changes.
 
 =head1 AUTHOR
 
