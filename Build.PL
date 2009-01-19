@@ -19,9 +19,6 @@ my $build = Module::Build->new(
 	'add_to_cleanup'	=> [ 'META.yml', 'Makefile.PL', 'README' ],	# automatically generated
 
 	'build_requires'	=> {
-		# FIXME do we need this?
-		#'Module::Build'		=> 0,
-
 		# Test stuff
 		'Test::More'			=> '0.86',	# require latest for note() support in t/a_is_prereq_outdated.t
 	},
@@ -38,6 +35,11 @@ my $build = Module::Build->new(
 
 		# FUSE support
 		'Fuse'				=> '0.09',
+	},
+
+	'recommends'		=> {
+		# Filesys::Virtual wrapper
+		'Fuse::Filesys::Virtual'	=> 0,
 	},
 
 	# FIXME wishlist...

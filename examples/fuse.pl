@@ -43,9 +43,18 @@ my %files = (
 	},
 );
 
+POE::Session->create(
+	__PACKAGE__->inline_states(),
+);
+
+POE::Kernel->run();
+exit;
+
 sub _start : State {
 	# create the fuse session
 	POE::Component::Fuse->spawn;
+	print "Check us out at the default place: /tmp/poefuse\n";
+	print "This is an entirely in-memory filesystem.\n";
 }
 
 sub _child : State {
@@ -82,6 +91,16 @@ sub fuse_getattr : State {
 		# path does not exist
 		$postback->( -ENOENT() );
 	}
+
+	return;
+}
+
+sub fuse_readlink : State {
+	my( $postback, $context, $path ) = @_[ ARG0 .. ARG2 ];
+	print "READLINK: '$path'\n";
+
+	# we don't have any link support
+	$postback->( -ENOSYS() );
 
 	return;
 }
@@ -173,8 +192,8 @@ sub fuse_open : State {
 }
 
 sub fuse_read : State {
-	my( $postback, $context, $path, $buffer, $offset ) = @_[ ARG0 .. ARG4 ];
-	print "READ: '$path' - '$buffer' - '$offset'\n";
+	my( $postback, $context, $path, $size, $offset ) = @_[ ARG0 .. ARG4 ];
+	print "READ: '$path' - '$size' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {
@@ -188,8 +207,8 @@ sub fuse_read : State {
 				if ( $offset == length( $files{ $path }{'cont'} ) ) {
 					$postback->( 0 );
 				} else {
-					# phew, return as much data as buffer allows it
-					$postback->( substr( $files{ $path }{'cont'}, $offset, $buffer ) );
+					# phew, return the data!
+					$postback->( substr( $files{ $path }{'cont'}, $offset, $size ) );
 				}
 			}
 		} else {
@@ -521,6 +540,26 @@ sub fuse_utime : State {
 	return;
 }
 
+sub fuse_statfs : State {
+	my( $postback, $context ) = @_[ ARG0, ARG1 ];
+
+	# This is a fake filesystem, so return fake data ;)
+	# $namelen, $files, $files_free, $blocks, $blocks_avail, $blocksize
+	$postback->( 255, 1, 1, 1, 1, 2 );
+
+	return;
+}
+
+sub fuse_fsync : State {
+	my( $postback, $context, $path, $fsync_mode ) = @_[ ARG0 .. ARG3 ];
+	print "FSYNC: '$path' - '$fsync_mode'\n";
+
+	# we don't do anything that requires us to do this, so success!
+	$postback->( 0 );
+
+	return;
+}
+
 # copied from Fuse::Simple, thanks!
 sub dump_open_flags {
     my $flags = shift;
@@ -548,10 +587,3 @@ sub dump_open_flags {
 
     return $str;
 }
-
-POE::Session->create(
-	__PACKAGE__->inline_states(),
-);
-
-POE::Kernel->run();
-exit;

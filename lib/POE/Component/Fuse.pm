@@ -99,9 +99,9 @@ sub spawn {
 		}
 		delete $opt{'session'} if exists $opt{'session'};
 
-		# Wrap the vfilesys object around our own FUSE <-> Filesys::Virtual wrapper
-		require POE::Component::Fuse::FsV;
-		$opt{'vfilesys'} = POE::Component::Fuse::FsV->new( $opt{'vfilesys'} );
+		# Wrap the vfilesys object around the FUSE <-> Filesys::Virtual wrapper
+		require Fuse::Filesys::Virtual;
+		$opt{'vfilesys'} = Fuse::Filesys::Virtual->new( $opt{'vfilesys'}, { 'debug' => DEBUG() } );
 	}
 
 	# should we automatically umount?
@@ -414,8 +414,13 @@ sub wheel_stdout : State {
 			$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
 		} else {
 			# send it to the wrapper!
-			my $subname = "fuse_" . $data->{'TYPE'};
-			my @result = $_[HEAP]->{'VFILESYS'}->$subname->( $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
+			my $subname = $_[HEAP]->{'VFILESYS'}->can( $data->{'TYPE'} );
+			my @result;
+			if ( defined $subname ) {
+				@result = $subname->( $_[HEAP]->{'VFILESYS'}, @{ $data->{'ARGS'} } );
+			} else {
+				@result = ( 0 );	# FIXME: change to EPERM or something
+			}
 			$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'} ], \@result );
 		}
 	} else {

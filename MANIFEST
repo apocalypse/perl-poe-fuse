@@ -5,11 +5,11 @@ MANIFEST.SKIP
 README
 lib/POE/Component/Fuse.pm
 lib/POE/Component/Fuse/SubProcess.pm
-lib/POE/Component/Fuse/FsV.pm
 META.yml
 Changes
 
 examples/fuse.pl
+examples/vfilesys.pl
 
 t/1_load.t
 
