@@ -5,7 +5,7 @@
 use strict; use warnings;
 
 # uncomment this to have debugging
-#sub POE::Component::Fuse::DEBUG { 1 }
+sub POE::Component::Fuse::DEBUG { 1 }
 
 use POE;
 use POE::Component::Fuse;
@@ -176,6 +176,9 @@ sub fuse_removexattr : State {
 sub fuse_open : State {
 	my( $postback, $context, $path, $flags ) = @_[ ARG0 .. ARG3 ];
 	#print "OPEN: '$path' - " . dump_open_flags( $flags );
+
+	# set some fake data in the fh
+	$context->{'fh'} = 5;
 
 	if ( exists $files{ $path } ) {
 		unless ( $files{ $path }{'type'} & 0040 ) {

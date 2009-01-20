@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # Import what we need from the POE namespace
 use POE;
@@ -94,9 +94,24 @@ sub spawn {
 		}
 	} else {
 		# make sure it's a real object
-		if ( ! ref $opt{'vfilesys'} or ! $opt{'vfilesys'}->isa( 'Filesys::Virtual' ) ) {
-			warn 'The passed-in vfilesys object is not a subclass of Filesys::Virtual!';
+		if ( ! ref $opt{'vfilesys'} ) {
+			warn 'The passed-in vfilesys option is not an object';
 			return 0;
+		} else {
+			if ( $opt{'vfilesys'}->isa( 'Filesys::Virtual' ) ) {
+				# Wrap the vfilesys object around the FUSE <-> Filesys::Virtual wrapper
+				require Fuse::Filesys::Virtual;
+				$opt{'vfilesys'} = Fuse::Filesys::Virtual->new( $opt{'vfilesys'}, { 'debug' => 0 } );
+			} else {
+				if ( $opt{'vfilesys'}->isa( 'Filesys::Virtual::Async' ) ) {
+					# wrap it around our internal wrapper
+					require POE::Component::Fuse::AsyncFsV;
+					$opt{'vfilesys'} = POE::Component::Fuse::AsyncFsV->new( $opt{'vfilesys'} );
+				} else {
+					warn 'The passed-in vfilesys object is not a subclass of Filesys::Virtual or Filesys::Virtual::Async';
+					return 0;
+				}
+			}
 		}
 
 		# warn user if they tried to use both vfilesys+session
@@ -104,10 +119,6 @@ sub spawn {
 			warn 'Setting both VFILESYS+SESSION will not work, choosing VFILESYS over SESSION!';
 		}
 		delete $opt{'session'} if exists $opt{'session'};
-
-		# Wrap the vfilesys object around the FUSE <-> Filesys::Virtual wrapper
-		require Fuse::Filesys::Virtual;
-		$opt{'vfilesys'} = Fuse::Filesys::Virtual->new( $opt{'vfilesys'}, { 'debug' => DEBUG() } );
 	}
 
 	# should we automatically umount?
@@ -427,20 +438,25 @@ sub wheel_stdout : State {
 		# vfilesys or session?
 		if ( exists $_[HEAP]->{'SESSION'} ) {
 			# make the postback
-			my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'} );
+			my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'}, $data->{'CONTEXT'} );
 
 			# send it to the session!
 			$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
 		} else {
-			# send it to the wrapper!
 			my $subname = $_[HEAP]->{'VFILESYS'}->can( $data->{'TYPE'} );
-			my @result;
-			if ( defined $subname ) {
-				@result = $subname->( $_[HEAP]->{'VFILESYS'}, @{ $data->{'ARGS'} } );
+			if ( ! defined $subname ) {
+				$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], -EIO() );
 			} else {
-				@result = ( -EIO() );
+				# send it to the wrapper!
+				if ( $_[HEAP]->{'VFILESYS'}->isa( 'POE::Component::Fuse::AsyncFsV' ) ) {
+					# async wrapper!
+					$subname->( $_[HEAP]->{'VFILESYS'}, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
+				} else {
+					# synchronous wrapper!
+					my @result = $subname->( $_[HEAP]->{'VFILESYS'}, @{ $data->{'ARGS'} } );
+					$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], \@result );
+				}
 			}
-			$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'} ], \@result );
 		}
 	} else {
 		if ( DEBUG ) {
@@ -462,6 +478,11 @@ sub reply : State {
 			'TYPE'		=> $orig_data->[0],
 			'RESULT'	=> $result,
 		};
+
+		# we pass it back down in case somebody changed fh
+		if ( exists $orig_data->[1]->{'fh'} ) {
+			$data->{'FH'} = $orig_data->[1]->{'fh'};
+		}
 
 		if ( DEBUG ) {
 			require Data::Dumper;
@@ -805,6 +826,14 @@ modules. This means in the future, using L<Filesys::Virtual::Async::SSH> should 
 of callbacks, yay! The design of this module ( by using postbacks ) already nicely accomodates this and all
 that remains is to write the event <-> object wrapper once ::Async gets off the ground :) This would be called
 something like L<Fuse::Filesys::Virtual::Async> or so...
+
+=head3 Debugging
+
+You can enable debug mode which prints out some information ( and especially error messages ) by doing this:
+
+	sub Filesys::Virtual::Async::Dispatcher::DEBUG () { 1 }
+	use Filesys::Virtual::Async::Dispatcher;
+
 
 =head1 EXPORT
 

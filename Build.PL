@@ -40,6 +40,10 @@ my $build = Module::Build->new(
 	'recommends'		=> {
 		# Filesys::Virtual wrapper
 		'Fuse::Filesys::Virtual'	=> 0,
+
+		# Async stuff for better integration with POE
+		'Filesys::Virtual::Async'	=> 0,
+		'POE::Component::AIO'		=> 0,
 	},
 
 	# FIXME wishlist...

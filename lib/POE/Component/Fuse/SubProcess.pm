@@ -112,11 +112,14 @@ sub start_fuse {
 sub fuse_callback {
 	my $type = shift;
 
+	# get the context
+	my $cxt = fuse_get_context();
+
 	# pass it on to our master!
 	send_master( {
 		'TYPE'		=> $type,
 		'ARGS'		=> [ @_ ],
-		'CONTEXT'	=> fuse_get_context(),
+		'CONTEXT'	=> $cxt,
 	} );
 
 	# wait for the reply
@@ -125,6 +128,11 @@ sub fuse_callback {
 	# make sure the type is the same
 	if ( $reply->{'ACTION'} eq 'REPLY' ) {
 		if ( $reply->{'TYPE'} eq $type ) {
+			# Fix up the FH if needed
+			if ( exists $reply->{'FH'} ) {
+				$cxt->{'fh'} = $reply->{'FH'};
+			}
+
 			# one-arg check
 			if ( scalar @{ $reply->{'RESULT'} } == 1 ) {
 				return $reply->{'RESULT'}->[0];
