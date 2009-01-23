@@ -77,7 +77,7 @@ sub fuse_getdir {
 		}
 	};
 
-	$self->fsv->dirlist( $path, $callback );
+	$self->fsv->readdir( $path, $callback );
 	return;
 }
 
