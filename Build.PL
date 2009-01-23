@@ -35,6 +35,10 @@ my $build = Module::Build->new(
 
 		# FUSE support
 		'Fuse'				=> '0.09',
+
+		# system constants
+		'Errno'				=> 0,
+		'Fcntl'				=> 0,
 	},
 
 	'recommends'		=> {
