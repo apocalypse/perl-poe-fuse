@@ -18,12 +18,7 @@ use Errno qw( :POSIX );		# ENOENT EISDIR etc
 
 # Set some constants
 BEGIN {
-	# Debug fun!
-	if ( ! defined &DEBUG ) {
-		## no critic
-		eval "sub DEBUG () { 0 }";
-		## use critic
-	}
+	if ( ! defined &DEBUG ) { *DEBUG = sub () { 0 } }
 }
 
 # starts the component!
@@ -346,6 +341,7 @@ sub wheel_setup : State {
 		# Set up the SubProcess we communicate with
 		$_[HEAP]->{'WHEEL'} = POE::Wheel::Run->new(
 			# What we will run in the separate process
+			#'Program'	=>	"valgrind --suppressions=/home/apoc/perl.supp --leak-check=full --leak-resolution=high --num-callers=50 $^X -MPOE::Component::Fuse::SubProcess -e 'POE::Component::Fuse::SubProcess::main()'",
 			'Program'	=>	"$^X -MPOE::Component::Fuse::SubProcess -e 'POE::Component::Fuse::SubProcess::main()'",
 
 			# Kill off existing FD's
@@ -417,7 +413,7 @@ sub wheel_stderr : State {
 	# skip empty lines
 	if ( $line ne '' ) {
 		if ( DEBUG ) {
-			warn "received stderr from subprocess: $line";
+			print "received stderr from subprocess: $line\n";
 		}
 	}
 
@@ -480,7 +476,7 @@ sub reply : State {
 		};
 
 		# we pass it back down in case somebody changed fh
-		if ( exists $orig_data->[1]->{'fh'} ) {
+		if ( defined $orig_data->[1] and exists $orig_data->[1]->{'fh'} ) {
 			$data->{'FH'} = $orig_data->[1]->{'fh'};
 		}
 
@@ -730,16 +726,18 @@ The default is: calling session ( if POE is running )
 
 =head3 vfilesys
 
-The Filesys::Virtual object to use as our filesystem. PoCo-Fuse will proceed to use L<Fuse::Filesys::Virtual>
+The L<Filesys::Virtual> object to use as our filesystem. PoCo-Fuse will proceed to use L<Fuse::Filesys::Virtual>
 to wrap around it and process the events internally.
+
+Furthermore, you can also use L<Filesys::Virtual::Async> subclasses, this module understands their callback API
+and will process it properly!
 
 If this option is missing and "session" isn't enabled spawn() will return failure.
 
 NOTE: You cannot use this and "session" at the same time! PoCo-Fuse will pick this over session!
 
 Compatibility has not been tested with all Filesys::Virtual::XYZ subclasses, so please let me know if some isn't
-working properly! Furthermore, this doesn't support the "new" Filesys::Virtual::Async API! PoCo-Fuse will do an
-$obj->isa( 'Filesys::Virtual' ) check before accepting the object or return failure if it isn't a subclass.
+working properly!
 
 The default is: not used
 
@@ -814,19 +812,6 @@ it to POE...
 
 If anybody have the time and knowledge, please help me out and we can have fun converting this to XS!
 
-=head3 Filesys::Virtual::Async
-
-While the current implementation works nicely, it is acknowledged that there's potential for blockage when
-using the L<Filesys::Virtual> modules. For example, if you use L<Filesys::Virtual::SSH> every time you
-access something, it will make a SSH call over the wire. This will block the entire process until it returns!
-
-Xantus informed me that there's work going on in the async department and it will rectify this problem. The
-nice thing is that you can easily use the event-based API this module exposes and hook it up to the ::Async
-modules. This means in the future, using L<Filesys::Virtual::Async::SSH> should not block because of the magic
-of callbacks, yay! The design of this module ( by using postbacks ) already nicely accomodates this and all
-that remains is to write the event <-> object wrapper once ::Async gets off the ground :) This would be called
-something like L<Fuse::Filesys::Virtual::Async> or so...
-
 =head3 Debugging
 
 You can enable debug mode which prints out some information ( and especially error messages ) by doing this:
@@ -848,6 +833,8 @@ L<Fuse>
 L<Filesys::Virtual>
 
 L<Fuse::Filesys::Virtual>
+
+L<Filesys::Virtual::Async>
 
 =head1 SUPPORT
 

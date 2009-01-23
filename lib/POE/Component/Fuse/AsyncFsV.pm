@@ -1,14 +1,13 @@
 # Declare our package
 package POE::Component::Fuse::AsyncFsV;
-use strict;
-use warnings;
+use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
 $VERSION = '0.01';
 
 # load the aio helper
-use POE::Component::AIO;
+use POE::Component::AIO { no_auto_bootstrap => 1, no_auto_export => 1 };
 
 # we need access to the kernel
 use POE;
@@ -22,6 +21,9 @@ sub new {
 	my $class = shift;
 	my $fsv   = shift;
 
+	# init PoCo-AIO
+	POE::Component::AIO->new();
+
 	# Create our obj and return it
 	return bless {
 		'fsv'	=> $fsv,
@@ -34,6 +36,25 @@ sub fsv {
 	return shift->{'fsv'};
 }
 
+# simple callback that returns 0 for FUSE
+sub _cb {
+	my( $self, $name ) = @_;
+
+	# make our custom wrapper
+	my $cb = $poe_kernel->get_active_session->postback( 'reply', $name );
+	my $callback = sub {
+		if ( $_[0] ) {
+			# FUSE needs 0 as retval
+			$cb->( 0 );
+		} else {
+			my $retval = $! // -EINVAL();
+			$cb->( $retval );
+		}
+	};
+
+	return $callback;
+}
+
 sub fuse_getattr {
 	my ( $self, $context, $path ) = @_;
 
@@ -44,7 +65,19 @@ sub fuse_getattr {
 sub fuse_getdir {
 	my ( $self, $context, $path ) = @_;
 
-	$self->fsv->dirlist( $path, $poe_kernel->get_active_session->postback( 'reply', 'getdir' ) );
+	# make a special wrapper
+	my $cb = $poe_kernel->get_active_session->postback( 'reply', 'getdir' );
+	my $callback = sub {
+		if ( defined $_[0] ) {
+			# FUSE needs 0 at the end of list to signify success
+			$cb->( @{ $_[0] }, 0 );
+		} else {
+			my $retval = $! // -EINVAL();
+			$cb->( $retval );
+		}
+	};
+
+	$self->fsv->dirlist( $path, $callback );
 	return;
 }
 
@@ -84,30 +117,21 @@ sub fuse_removexattr {
 sub fuse_open {
 	my ( $self, $context, $path, $flags ) = @_;
 
-	# determine open mode
-	my $mode;
-	if ( $flags & O_RDONLY ) {
-		$mode = 'READ';
-	} elsif ( $flags & O_WRONLY or $flags & O_RDWR
-
-	# did we already open this file?
-	if ( exists $self->{'fhmap'}->{ $path } ) {
-		$poe_kernel->get_active_session->yield( 'reply', [ 'open' ], [ 0 ] );
-		return;
-	}
-
-	# make the generic callback
-	my $cb = $poe_kernel->get_active_session->postback( 'reply', 'open' );
-
 	# make a special wrapper
+	my $cb = $poe_kernel->get_active_session->postback( 'reply', 'open', $context );
 	my $callback = sub {
 		my $fh = shift;
 		if ( defined $fh ) {
 			# store it!
-			$self->{'fhmap'}->{ $path . $flags } = $fh;
+			if ( exists $self->{'fhmap'}->{ fileno( $fh ) } ) {
+				die "internal inconsistency - fh already exists in fhmap!";
+			}
+			$self->{'fhmap'}->{ fileno( $fh ) } = $fh;
+			$context->{'fh'} = fileno( $fh );
 			$cb->( 0 );
 		} else {
-			$cb->( $! );
+			my $retval = $! // -EINVAL();
+			$cb->( $retval );
 		}
 	};
 
@@ -115,7 +139,7 @@ sub fuse_open {
 	# FIXME we use 0666 as default, should we change this or something?
 	my $mode = 0;
 	if ( $flags & O_CREAT ) {
-		$mode = 0666;
+		$mode = oct( 666 );
 	}
 
 	# actually open it!
@@ -126,252 +150,212 @@ sub fuse_open {
 sub fuse_read {
 	my ( $self, $context, $path, $len, $offset ) = @_;
 
-	# do we have a cached fh?
-	if ( ! exists $self->{'fhmap'}->{ $path } ) {
+	# get the fh
+	my $fh = undef;
+	if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+		$fh = $self->{'fhmap'}->{ $context->{'fh'} };
+	}
 
+	if ( ! defined $fh ) {
+		$poe_kernel->get_active_session->yield( 'reply', [ 'read' ], [ -EINVAL() ] );
+	} else {
+		# make our custom wrapper
+		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'read' );
+		my $buf = '';
+		my $callback = sub {
+			if ( $_[0] != $len ) {
+				$cb->( -EIO() );
+			} else {
+				$cb->( $buf );
+			}
+		};
+
+		# aio_read $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
+		$self->fsv->read( $fh, $offset, $len, $buf, 0, $callback );
+	}
+
+	return;
 }
 
 sub fuse_flush {
 	my ( $self, $context, $path ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
+	# get the fh
+	my $fh = undef;
+	if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+		$fh = $self->{'fhmap'}->{ $context->{'fh'} };
 	}
 
-	if ( $self->fsv->test( 'd', $path ) ) {
-		return -EISDIR();
+	if ( ! defined $fh ) {
+		$poe_kernel->get_active_session->yield( 'reply', [ 'flush' ], [ -EINVAL() ] );
+	} else {
+		# FIXME what to do for flush? seems like we need to do nothing...
+		$poe_kernel->get_active_session->yield( 'reply', [ 'flush' ], [ 0 ] );
 	}
 
-	# FIXME what to do for flush? seems like we need to do nothing...
-	return 0;
+	return;
 }
 
 sub fuse_release {
 	my ( $self, $context, $path, $flags ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
+	# get the fh
+	my $fh = undef;
+	if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+		$fh = $self->{'fhmap'}->{ $context->{'fh'} };
 	}
 
-	if ( $self->fsv->test( 'd', $path ) ) {
-		return -EISDIR();
+	# FUSE sometimes calls release multiple times per file
+	if ( ! defined $fh ) {
+		# assume success
+		$poe_kernel->get_active_session->yield( 'reply', [ 'release' ], [ 0 ] );
+	} else {
+		# make our custom wrapper
+		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'release' );
+		my $callback = sub {
+			if ( $_[0] ) {
+				# get rid of our mapping
+				if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+					delete $self->{'fhmap'}->{ $context->{'fh'} };
+				}
+
+				# FUSE needs 0 as retval
+				$cb->( 0 );
+			} else {
+				my $retval = $! // -EINVAL();
+				$cb->( $retval );
+			}
+		};
+
+		$self->fsv->close( $fh, $callback );
 	}
 
-	# FIXME close the $fh
-
-	# successfully closed!
-	return 0;
+	return;
 }
 
 sub fuse_truncate {
 	my ( $self, $context, $path, $offset ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
-	}
-
-	if ( $self->fsv->test( 'd', $path ) ) {
-		return -EISDIR();
-	}
-
-	# get the size of the file
-	my $size = ( $self->fsv->stat($path) )[7];
-	if ( $offset > $size ) {
-		return -EINVAL();
-	}
-	if ( $offset == $size ) {
-		return 0;
-	}
-
-	# FIXME truncate the $fh
-
-	# successfully truncated!
-	return 0;
+	$self->fsv->truncate( $path, $offset, $self->_cb( 'truncate' ) );
+	return;
 }
 
 sub fuse_write {
 	my ( $self, $context, $path, $buffer, $offset ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
+	# get the fh
+	my $fh = undef;
+	if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+		$fh = $self->{'fhmap'}->{ $context->{'fh'} };
 	}
 
-	if ( $self->fsv->test( 'd', $path ) ) {
-		return -EISDIR();
+	if ( ! defined $fh ) {
+		$poe_kernel->get_active_session->yield( 'reply', [ 'write' ], [ -EINVAL() ] );
+	} else {
+		# aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
+		$self->fsv->write( $fh, $offset, length( $buffer ), $buffer, 0, $poe_kernel->get_active_session->postback( 'reply', 'write' ) );
 	}
 
-	# get the size of the file
-	my $size = ( $self->fsv->stat($path) )[7];
-
-	if ( $offset > $size ) {
-		return -EINVAL();
-	}
-
-	# FIXME seek to $offset in the $fh
-
-	# FIXME write $buffer to the $fh
-
-	# successfully wrote!
-	return length($buffer);
+	return;
 }
 
 sub fuse_mknod {
 	my ( $self, $context, $path, $modes, $device ) = @_;
 
-# cleanup the mode ( for some reason we get '100644' instead of '0644' )
-# FIXME this seems to also screw up the S_ISREG() stuff, have to investigate more...
-	$modes = $modes & 000777;
-
-	if ( $self->fsv->test( 'e', $path ) ) {
-		return -EEXIST();
-	}
-
-	# we only allow regular files to be created
-	if ( $device != 0 ) {
-		return -EINVAL();
-	}
-
- # should we add validation to make sure all parents already exist
- # seems like touch() and friends check themselves, so we don't have to do it...
-
-	# FIXME actually create the file
-
-	# successfully created the file!
-	return 0;
+	# FIXME interesting, ::Async doesn't care about $device...
+	$self->fsv->mknod( $path, $modes, $device, $self->_cb( 'mknod' ) );
+	return;
 }
 
 sub fuse_mkdir {
 	my ( $self, $context, $path, $modes ) = @_;
 
-	if ( $self->fsv->test( 'e', $path ) ) {
-		return -EEXIST();
-	}
-
- # should we add validation to make sure all parents already exist
- # seems like mkdir() and friends check themselves, so we don't have to do it...
-
-	if ( $self->fsv->mkdir( $path, $modes ) ) {
-		return 0;
-	}
-	else {
-		return -EIO();
-	}
+	$self->fsv->mkdir( $path, $modes, $self->_cb( 'mkdir' ) );
+	return;
 }
 
 sub fuse_unlink {
 	my ( $self, $context, $path ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
-	}
-
-	if ( $self->fsv->test( 'd', $path ) ) {
-		return -EISDIR();
-	}
-
-	if ( $self->fsv->delete($path) ) {
-		return 0;
-	}
-	else {
-		return -EIO();
-	}
+	$self->fsv->unlink( $path, $self->_cb( 'unlink' ) );
+	return;
 }
 
 sub fuse_rmdir {
 	my ( $self, $context, $path ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
-	}
-
-	if ( !$self->fsv->test( 'd', $path ) ) {
-		return -ENOTDIR();
-	}
-
-  # valid directory, does this directory have any children ( files, subdirs ) ??
-	my @list = $self->fsv->list($path);
-	if ( scalar @list == 0 ) {
-		if ( $self->fsv->rmdir($path) ) {
-			return 0;
-		}
-		else {
-			return -EIO();
-		}
-	}
-	else {
-		return -ENOTEMPTY();
-	}
+	$self->fsv->rmdir( $path, $self->_cb( 'rmdir' ) );
+	return;
 }
 
 sub fuse_symlink {
 	my ( $self, $context, $path, $symlink ) = @_;
 
-	# no support in Filesys::Virtual
-	return -ENOSYS();
+	$self->fsv->symlink( $path, $symlink, $self->_cb( 'symlink' ) );
+	return;
 }
 
 sub fuse_rename {
 	my ( $self, $context, $path, $newpath ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
-	}
-
-	if ( $self->fsv->test( 'e', $newpath ) ) {
-		return -EEXIST();
-	}
-
-    # should we add validation to make sure all parents already exist
-    # seems like mv() and friends check themselves, so we don't have to do it...
-
-	# FIXME do the rename
-
-	# successful rename!
-	return 0;
+	$self->fsv->rename( $path, $newpath, $self->_cb( 'rename' ) );
+	return;
 }
 
 sub fuse_link {
 	my ( $self, $context, $path, $hardlink ) = @_;
 
-	# no support in Filesys::Virtual
-	return -ENOSYS();
+	$self->fsv->link( $path, $hardlink, $self->_cb( 'link' ) );
+	return;
 }
 
 sub fuse_chmod {
 	my ( $self, $context, $path, $modes ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
-	}
-
-	if ( $self->fsv->chmod( $modes, $path ) ) {
-		return 0;
-	}
-	else {
-		return -EIO();
-	}
+	$self->fsv->chmod( $path, $modes, $self->_cb( 'chmod' ) );
+	return;
 }
 
 sub fuse_chown {
 	my ( $self, $context, $path, $uid, $gid ) = @_;
 
-	# no support in Filesys::Virtual
-	return -ENOSYS();
+	$self->fsv->chown( $path, $uid, $gid, $self->_cb( 'chown' ) );
+	return;
 }
 
 sub fuse_utime {
 	my ( $self, $context, $path, $atime, $mtime ) = @_;
 
-	if ( !$self->fsv->test( 'e', $path ) ) {
-		return -ENOENT();
+	$self->fsv->utime( $path, $atime, $mtime, $self->_cb( 'utime' ) );
+	return;
+}
+
+sub fuse_fsync {
+	my ( $self, $context, $path, $fsync_mode ) = @_;
+
+	# get the fh
+	my $fh = undef;
+	if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
+		$fh = $self->{'fhmap'}->{ $context->{'fh'} };
 	}
 
-	if ( $self->fsv->utime( $atime, $mtime, $path ) ) {
-		return 0;
+	if ( ! defined $fh ) {
+		$poe_kernel->get_active_session->yield( 'reply', [ 'fsync' ], [ -EINVAL() ] );
+	} else {
+		# interesting, ::Async don't care about $fsync_mode...
+		$self->fsv->fsync( $fh, $self->_cb( 'fsync' ) );
 	}
-	else {
-		return -EIO();
-	}
+
+	return;
+}
+
+sub fuse_statfs {
+	my( $self, $context ) = @_;
+
+	# FIXME fake the data...
+	# $namelen, $files, $files_free, $blocks, $blocks_avail, $blocksize
+	$poe_kernel->get_active_session->yield( 'reply', [ 'statfs' ], [ 255, 1, 1, 1, 1, 2 ] );
+	return;
 }
 
 1;
@@ -408,7 +392,9 @@ L<Filesys::Virtual::Async>
 
 Apocalypse E<lt>apocal@cpan.orgE<gt>
 
-Props goes to xantus and others who wrote the L<Filesys::Virtual> module!
+Props goes to xantus who wrote the L<Filesys::Virtual::Async> module!
+
+Inspiration was taken from the L<Fuse::Filesys::Virtual> module too.
 
 =head1 COPYRIGHT AND LICENSE
 
