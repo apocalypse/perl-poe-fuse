@@ -4,13 +4,13 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # We pass in data to POE::Filter::Reference
 use POE::Filter::Reference;
 
 # We communicate with FUSE here
-use Fuse qw( fuse_get_context );
+use POE::Component::Fuse::myFuse qw( fuse_get_context fuse_set_fh );
 
 # Our Filter object
 my $filter = POE::Filter::Reference->new();
@@ -48,7 +48,7 @@ sub receive_master {
 			if ( scalar @$data == 1 ) {
 				return $data->[0];
 			} else {
-				die 'received malformed input';
+				# get more data
 			}
 		}
 	}
@@ -93,7 +93,7 @@ sub start_fuse {
 	}
 
 	# setup FUSE
-	Fuse::main(
+	POE::Component::Fuse::myFuse::main(
 		# basic setup
 		'debug'		=> 0,
 		'threaded'	=> 0,
@@ -129,8 +129,15 @@ sub fuse_callback {
 	if ( $reply->{'ACTION'} eq 'REPLY' ) {
 		if ( $reply->{'TYPE'} eq $type ) {
 			# Fix up the FH if needed
-			if ( exists $reply->{'FH'} ) {
-				$cxt->{'fh'} = $reply->{'FH'};
+			if ( $type eq 'open' and exists $reply->{'FH'} and defined $reply->{'FH'} ) {
+				# compare the data!
+				if ( defined $cxt->{'fh'} ) {
+					if ( $reply->{'FH'} != $cxt->{'fh'} ) {
+						fuse_set_fh( $reply->{'FH'} );
+					}
+				} else {
+					fuse_set_fh( $reply->{'FH'} );
+				}
 			}
 
 			# one-arg check

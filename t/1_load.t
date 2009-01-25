@@ -5,6 +5,8 @@
 #use Test::UseAllModules;
 #BEGIN { all_uses_ok(); }
 
-use Test::More tests => 2;
+use Test::More tests => 4;
 use_ok( 'POE::Component::Fuse' );
 use_ok( 'POE::Component::Fuse::SubProcess' );
+use_ok( 'POE::Component::Fuse::AsyncFsV' );
+use_ok( 'POE::Component::Fuse::myFuse' );

@@ -30,8 +30,10 @@ static inline void create_perl_context() {
 #include <fuse.h>
 
 #undef DEBUGf
-#if 1
+#if 0
 #define DEBUGf(f, a) fprintf(stderr, f, a )
+#else
+#define DEBUGf(a...)
 #endif
 
 #define N_CALLBACKS 25
@@ -39,54 +41,16 @@ SV *_PLfuse_callbacks[N_CALLBACKS];
 
 /* APOCAL define the global that will store the file_info struct */
 #ifdef USE_THREADS
+/* TODO: use CXT stuff provided by perlxs */
 __thread struct fuse_file_info *fuseinfo = NULL;
-__thread HV *fuse_context_hash = NULL;
 #else
 struct fuse_file_info *fuseinfo = NULL;
-HV *fuse_context_hash = NULL;
 #endif
-
-/* APOCAL our own wrapper to simplify file_info mangling */
-int _wrap_perlcall( SV *callback, struct fuse_file_info *fuse ) {
-	int rv;
-	SV **fh = NULL;
-
-	/* make sure we set the vars properly */
-	if ( fuse == NULL )
-		fuseinfo = NULL;
-	else
-		fuseinfo = fuse;
-
-	if ( fuse_context_hash != NULL )
-		fuse_context_hash = NULL;
-
-	/* okay, call the perl sub! */
-	rv = call_sv( callback, G_ARRAY );
-
-	/* did we call get_context? */
-	if ( fuse_context_hash != NULL && fuseinfo != NULL ) {
-		DEBUGf("%s", "got both entries populated\n");
-		fh = hv_fetch( fuse_context_hash, "fh", 2, 0 );
-		if ( fh != NULL ) {
-			DEBUGf("fh key exists in hash value: %llu\n", (uint64_t)SvUV( *fh ));
-			if ( SvIOK( *fh ) && (uint64_t)(SvUV( *fh )) != fuseinfo->fh ) {
-				DEBUGf("%s", "fh value changed, updating struct\n");
-				fuseinfo->fh = (uint64_t)(SvUV( *fh ));
-			}
-		}
-	}
-
-	/* cleanup our variables */	
-	fuse_context_hash = NULL;
-	fuseinfo = NULL;
-	SvREFCNT_dec( fh );
-	return rv;
-}	
 
 int _PLfuse_getattr(const char *file, struct stat *result) {
 	int rv;
 	FUSE_CONTEXT_PRE;
-	DEBUGf("getattr begin: %s\n",file);
+	DEBUGf("%s","getattr begin\n");
 	ENTER;
 	SAVETMPS;
 	PUSHMARK(SP);
@@ -470,9 +434,14 @@ int _PLfuse_open (const char *file, struct fuse_file_info *fi) {
 	XPUSHs(sv_2mortal(newSVpv(file,0)));
 	XPUSHs(sv_2mortal(newSViv(flags)));
 	PUTBACK;
-	
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[14],fi);
+
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[14],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(rv)
@@ -498,9 +467,14 @@ int _PLfuse_read (const char *file, char *buf, size_t buflen, off_t off, struct 
 	XPUSHs(sv_2mortal(newSViv(buflen)));
 	XPUSHs(sv_2mortal(newSViv(off)));
 	PUTBACK;
-	
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[15],fi);
+
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[15],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(!rv)
@@ -541,8 +515,13 @@ int _PLfuse_write (const char *file, const char *buf, size_t buflen, off_t off, 
 	XPUSHs(sv_2mortal(newSViv(off)));
 	PUTBACK;
 
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[16],fi);
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[16],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(rv)
@@ -612,8 +591,13 @@ int _PLfuse_flush (const char *file, struct fuse_file_info *fi) {
 	XPUSHs(sv_2mortal(newSVpv(file,0)));
 	PUTBACK;
 
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[18],fi);
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[18],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(rv)
@@ -640,8 +624,13 @@ int _PLfuse_release (const char *file, struct fuse_file_info *fi) {
 	XPUSHs(sv_2mortal(newSViv(flags)));
 	PUTBACK;
 
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[19],fi);
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[19],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(rv)
@@ -668,8 +657,13 @@ int _PLfuse_fsync (const char *file, int datasync, struct fuse_file_info *fi) {
 	XPUSHs(sv_2mortal(newSViv(flags)));
 	PUTBACK;
 
-	/* APOCAL store the calling fuse_file_info struct */
-	rv = _wrap_perlcall(_PLfuse_callbacks[20],fi);
+	/* APOCAL stuff the fileinfo struct */
+	fuseinfo = fi;
+
+	rv = call_sv(_PLfuse_callbacks[20],G_SCALAR);
+
+	/* APOCAL remove the reference */
+	fuseinfo = NULL;
 
 	SPAGAIN;
 	if(rv)
@@ -845,9 +839,6 @@ struct fuse_operations _available_ops = {
 getattr:		_PLfuse_getattr,
 readlink:		_PLfuse_readlink,
 getdir:			_PLfuse_getdir,
-#if 0
-readdir:		_PLfuse_readdir,
-#endif
 mknod:			_PLfuse_mknod,
 mkdir:			_PLfuse_mkdir,
 unlink:			_PLfuse_unlink,
@@ -869,11 +860,19 @@ fsync:			_PLfuse_fsync,
 setxattr:		_PLfuse_setxattr,
 getxattr:		_PLfuse_getxattr,
 listxattr:		_PLfuse_listxattr,
-removexattr:		_PLfuse_removexattr,
+removexattr:	_PLfuse_removexattr,
 };
 
-MODULE = Fuse		PACKAGE = Fuse
+MODULE = POE::Component::Fuse::myFuse		PACKAGE = POE::Component::Fuse::myFuse
 PROTOTYPES: DISABLE
+
+void
+fuse_set_fh(fh)
+	int fh
+	CODE:
+	if ( fuseinfo != NULL ) {
+		fuseinfo->fh = (uint64_t)fh;
+	}
 
 SV*
 fuse_get_context()
@@ -883,17 +882,18 @@ fuse_get_context()
 	fc = fuse_get_context();
 	if(fc) {
 		HV *hash = newHV();
-		hv_stores(hash, "uid", newSViv(fc->uid) );
-		hv_stores(hash, "gid", newSViv(fc->gid) );
-		hv_stores(hash, "pid", newSViv(fc->pid) );
+		if ( ! hv_stores(hash, "uid", newSViv(fc->uid) ) )
+			croak( "serious error!" );
+		if ( ! hv_stores(hash, "gid", newSViv(fc->gid) ) )
+			croak( "serious error!" );
+		if ( ! hv_stores(hash, "pid", newSViv(fc->pid) ) )
+			croak( "serious error!" );
 
 		/* APOCAL add the fh data if possible */
 		if(fuseinfo != NULL) {
 			DEBUGf("data in fuseinfo->fh: %llu\n", fuseinfo->fh );
-			hv_stores(hash, "fh", newSVuv(fuseinfo->fh) );
-
-			/* also store this hash in the global */
-			fuse_context_hash = hash;
+			if ( ! hv_stores(hash, "fh", newSVuv(fuseinfo->fh) ) )
+				croak( "serious error!" );
 		}
 
 		RETVAL = newRV_inc((SV*)hash);
@@ -906,7 +906,7 @@ fuse_get_context()
 void
 perl_fuse_main(...)
 	PREINIT:
-	struct fuse_operations fops = 
+	struct fuse_operations fops =
 		{NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
 		 NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL};
 	int i, fd, debug, threaded;
@@ -927,8 +927,8 @@ perl_fuse_main(...)
 		master_interp = PERL_GET_CONTEXT;
 #else
 		fprintf(stderr,"FUSE warning: Your script has requested multithreaded "
-		               "mode, but your perl was not built with -Dusethreads.  "
-		               "Threads are disabled.\n");
+			       "mode, but your perl was not built with -Dusethreads.  "
+			       "Threads are disabled.\n");
 		threaded = 0;
 #endif
 	}
@@ -942,8 +942,8 @@ perl_fuse_main(...)
 			tmp2[i] = tmp1[i];
 #ifdef FUSE_USE_ITHREADS
 			if(threaded)
-                /* note: under 5.8.7, this croaks for code references. */
-                SvSHARE(var);
+		/* note: under 5.8.7, this croaks for code references. */
+		SvSHARE(var);
 #endif
 			_PLfuse_callbacks[i] = var;
 		} else
@@ -965,10 +965,10 @@ perl_fuse_main(...)
 		croak("out of memory\n");
 	}
 	fd = fuse_mount(mountpoint,&margs);
-	fuse_opt_free_args(&margs);        
+	fuse_opt_free_args(&margs);
 	if(fd < 0)
 		croak("could not mount fuse filesystem!\n");
-        if (debug) {
+	if (debug) {
 		if ( fuse_opt_add_arg(&fargs, "") == -1 ||
 			fuse_opt_add_arg(&fargs, "-d") == -1) {
 			fuse_opt_free_args(&fargs);

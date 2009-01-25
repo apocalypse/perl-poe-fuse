@@ -2,15 +2,15 @@
 use strict; use warnings;
 
 # uncomment this to have debugging
-#sub POE::Component::Fuse::DEBUG { 1 }
+sub POE::Component::Fuse::DEBUG { 1 }
 
 # loopback to our home directory!
-use Filesys::Virtual::Plain;
-my $vfs = Filesys::Virtual::Plain->new( {
+use Filesys::Virtual::Async::Plain;
+my $vfs = Filesys::Virtual::Async::Plain->new(
 	'cwd'		=> '/',
-	'root_path'	=> $ENV{'PWD'},
+	'root'		=> $ENV{'PWD'},
 	'home_path'	=> '/',
-} );
+);
 
 # load FUSE goodness
 use POE::Component::Fuse;

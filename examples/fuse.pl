@@ -14,33 +14,30 @@ use base 'POE::Session::AttributeBased';
 use Errno qw( :POSIX );		# ENOENT EISDIR etc
 use Fcntl qw( :DEFAULT :mode );	# S_IFREG S_IFDIR, O_SYNC O_LARGEFILE etc
 
+use File::Stat::ModeString;
+
 my %files = (
 	'/' => {
-		type => 0040,
-		mode => 0755,
+		mode => oct( '040755' ),
 		ctime => time()-1000,
 	},
 	'/a' => {
 		cont => "File 'a'.\n",
-		type => 0100,
-		mode => 0755,
+		mode => oct( 100755 ),
 		ctime => time()-2000,
 	},
 	'/b' => {
 		cont => "This is file 'b'.\n",
-		type => 0100,
-		mode => 0644,
+		mode => oct( 100644 ),
 		ctime => time()-1000,
 	},
 	'/foo' => {
-		type => 0040,
-		mode => 0755,
+		mode => oct( '040755' ),
 		ctime => time()-3000,
 	},
 	'/foo/bar' => {
-		cont => "APOCAL is the best!\nJust kidding :)",
-		type => 0100,
-		mode => 0755,
+		cont => "APOCAL is the best!\nJust kidding :)\n",
+		mode => oct( 100755 ),
 		ctime => time()-5000,
 	},
 );
@@ -54,10 +51,27 @@ exit;
 
 sub _start : State {
 	# create the fuse session
-	POE::Component::Fuse->spawn;
+	POE::Component::Fuse->spawn(
+		'umount'	=> 1,
+	);
 	print "Check us out at the default place: /tmp/poefuse\n";
-	print "This is an entirely in-memory filesystem, some things might not work.\n";
+	print "This is an entirely in-memory filesystem, some things might not work...\n";
+
+	$_[KERNEL]->delay_set( 'print_fs' => 30 );
 }
+
+sub print_fs : State {
+	print "dumping \%files hash\n";
+	foreach my $f ( keys %files ) {
+		print "\t$f -> mode(" . sprintf( "%04o", $files{$f}->{'mode'} ) . " - " .
+			mode_to_string( $files{$f}->{'mode'} ) . ")\n";
+	}
+
+	$_[KERNEL]->delay_set( 'print_fs' => 30 );
+
+	return;
+}
+
 
 sub _child : State {
 	return;
@@ -68,6 +82,7 @@ sub _stop : State {
 
 sub fuse_CLOSED : State {
 	print "shutdown: $_[ARG0]\n";
+	$_[KERNEL]->alarm_remove_all();
 	return;
 }
 
@@ -78,8 +93,15 @@ sub fuse_getattr : State {
 	if ( exists $files{ $path } ) {
 		my $size = exists( $files{ $path }{'cont'} ) ? length( $files{ $path }{'cont'} ) : 0;
 		$size = $files{ $path }{'size'} if exists $files{ $path }{'size'};
-		my $modes = ( $files{ $path }{'type'} << 9 ) + $files{ $path }{'mode'};
+		my $modes = $files{ $path }{'mode'};
+
 		my ($dev, $ino, $rdev, $blocks, $gid, $uid, $nlink, $blksize) = ( 0, 0, 0, 1, (split( /\s+/, $) ))[0], $>, 1, 1024 );
+		if ( S_ISDIR( $modes ) ) {
+			# count the children directories
+			$nlink = 2; # start with 2 ( . and .. )
+			$nlink += grep { $_ =~ /^$path\/?[^\/]+$/ and S_ISDIR( $files{ $_ }{'mode'} ) } ( keys %files );
+		}
+
 		$gid = $files{ $path }{'gid'} if exists $files{ $path }{'gid'};
 		$uid = $files{ $path }{'uid'} if exists $files{ $path }{'uid'};
 		my ($atime, $ctime, $mtime);
@@ -112,7 +134,7 @@ sub fuse_getdir : State {
 	#print "GETDIR: '$path'\n";
 
 	if ( exists $files{ $path } ) {
-		if ( $files{ $path }{'type'} & 0040 ) {
+		if ( S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# construct all the data in this directory
 			my @list = map { $_ =~ s/^$path\/?//; $_ }
 				grep { $_ =~ /^$path\/?[^\/]+$/ } ( keys %files );
@@ -168,7 +190,7 @@ sub fuse_removexattr : State {
 	#print "REMOVEXATTR: '$path' - '$attr'\n";
 
 	# we don't have any extended attribute support
-	$postback->( 0 );
+	$postback->( -ENOSYS() );
 
 	return;
 }
@@ -177,11 +199,8 @@ sub fuse_open : State {
 	my( $postback, $context, $path, $flags ) = @_[ ARG0 .. ARG3 ];
 	#print "OPEN: '$path' - " . dump_open_flags( $flags );
 
-	# set some fake data in the fh
-	$context->{'fh'} = 5;
-
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# accept the open! ( we ignore the flags for now )
 			$postback->( 0 );
 		} else {
@@ -201,7 +220,7 @@ sub fuse_read : State {
 	#print "READ: '$path' - '$size' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# valid file, proceed with the read!
 
 			# sanity check, offset cannot be bigger than the length of the file!
@@ -233,7 +252,7 @@ sub fuse_flush : State {
 	#print "FLUSH: '$path'\n";
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# allow flushing of a file ( we don't track state so who cares, ha! )
 			$postback->( 0 );
 		} else {
@@ -253,7 +272,7 @@ sub fuse_release : State {
 	#print "RELEASE: '$path' - " . dump_open_flags( $flags );
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# allow releasing of a file ( we don't track state so who cares, ha! )
 			$postback->( 0 );
 		} else {
@@ -273,7 +292,7 @@ sub fuse_truncate : State {
 	#print "TRUNCATE: '$path' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# valid file, proceed with the truncate!
 
 			# sanity check, offset cannot be bigger than the length of the file!
@@ -306,7 +325,7 @@ sub fuse_write : State {
 	#print "WRITE: '$path' - '" . length( $buffer ) . "' - '$offset'\n";
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# valid file, proceed with the write!
 
 			# sanity check, offset cannot be bigger than the length of the file!
@@ -333,12 +352,7 @@ sub fuse_write : State {
 
 sub fuse_mknod : State {
 	my( $postback, $context, $path, $modes, $device ) = @_[ ARG0 .. ARG4 ];
-
-	# cleanup the mode ( for some reason we get '100644' instead of '0644' )
-	# FIXME this seems to also screw up the S_ISREG() stuff, have to investigate more...
-	$modes = $modes & 000777;
-
-	#print "MKNOD: '$path' - '" . sprintf( "%04o", $modes ) . "' - '$device'\n";
+	#print "MKNOD: '$path' - '" . mode_to_string( $modes ) . "' - '$device'\n";
 
 	if ( exists $files{ $path } or $path eq '.' or $path eq '..' ) {
 		# already exists!
@@ -349,8 +363,10 @@ sub fuse_mknod : State {
 
 		# we only allow regular files to be created
 		if ( $device == 0 ) {
+			# make sure mode is proper
+			$modes = $modes | oct( '100000' );
+
 			$files{ $path } = {
-				type => 0100,
 				mode => $modes,
 				ctime => time(),
 				cont => "",
@@ -369,7 +385,7 @@ sub fuse_mknod : State {
 
 sub fuse_mkdir : State {
 	my( $postback, $context, $path, $modes ) = @_[ ARG0 .. ARG3 ];
-	#print "MKDIR: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
+	#print "MKDIR: '$path' - '" . mode_to_string( $modes ) . "'\n";
 
 	if ( exists $files{ $path } ) {
 		# already exists!
@@ -378,9 +394,11 @@ sub fuse_mkdir : State {
 		# should we add validation to make sure all parents already exist
 		# seems like mkdir() and friends check themselves, so we don't have to do it...
 
+		# make sure mode is proper
+		$modes = $modes | oct( '040000' );
+
 		# create the directory!
 		$files{ $path } = {
-			type => 0040,
 			mode => $modes,
 			ctime => time(),
 		};
@@ -397,7 +415,7 @@ sub fuse_unlink : State {
 	#print "UNLINK: '$path'\n";
 
 	if ( exists $files{ $path } ) {
-		unless ( $files{ $path }{'type'} & 0040 ) {
+		if ( ! S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# valid file, proceed with the deletion!
 			delete $files{ $path };
 
@@ -420,7 +438,7 @@ sub fuse_rmdir : State {
 	#print "RMDIR: '$path'\n";
 
 	if ( exists $files{ $path } ) {
-		if ( $files{ $path }{'type'} & 0040 ) {
+		if ( S_ISDIR( $files{ $path }{'mode'} ) ) {
 			# valid directory, does this directory have any children ( files, subdirs ) ??
 			my $children = grep { $_ =~ /^$path/ } ( keys %files );
 			if ( $children == 1 ) {
@@ -491,7 +509,7 @@ sub fuse_link : State {
 
 sub fuse_chmod : State {
 	my( $postback, $context, $path, $modes ) = @_[ ARG0 .. ARG3 ];
-	#print "CHMOD: '$path' - '" . sprintf( "%04o", $modes ) . "'\n";
+	print "CHMOD: '$path' - '" . sprintf( "%04o", $modes ) . " - " . mode_to_string( $modes ) . "'\n";
 
 	if ( exists $files{ $path } ) {
 		# okay, update the mode!

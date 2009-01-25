@@ -256,7 +256,7 @@ sub _stop : State {
 	if ( $_[HEAP]->{'UMOUNT'} ) {
 		# FIXME this is bad because it blocks POE but a good temporary solution :(
 		# FIXME make this portable!
-		system("fusermount -u -z $_[HEAP]->{'ALIAS'} >/dev/null 2>&1");
+		system("fusermount -u -z $_[HEAP]->{'MOUNT'} >/dev/null 2>&1");
 	}
 
 	return;
@@ -441,14 +441,11 @@ sub wheel_stdout : State {
 		} else {
 			my $subname = $_[HEAP]->{'VFILESYS'}->can( $data->{'TYPE'} );
 			if ( ! defined $subname ) {
-				$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], -EIO() );
+				$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], [ -EIO() ] );
 			} else {
-				# send it to the wrapper!
 				if ( $_[HEAP]->{'VFILESYS'}->isa( 'POE::Component::Fuse::AsyncFsV' ) ) {
-					# async wrapper!
 					$subname->( $_[HEAP]->{'VFILESYS'}, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
 				} else {
-					# synchronous wrapper!
 					my @result = $subname->( $_[HEAP]->{'VFILESYS'}, @{ $data->{'ARGS'} } );
 					$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], \@result );
 				}
@@ -464,7 +461,7 @@ sub wheel_stdout : State {
 }
 
 sub reply : State {
-	my( $orig_data, $result ) = @_[ ARG0 .. ARG2 ];
+	my( $orig_data, $result ) = @_[ ARG0, ARG1 ];
 
 	# send it down the pipe!
 	if ( defined $_[HEAP]->{'WHEEL'} ) {
@@ -476,7 +473,7 @@ sub reply : State {
 		};
 
 		# we pass it back down in case somebody changed fh
-		if ( defined $orig_data->[1] and exists $orig_data->[1]->{'fh'} ) {
+		if ( defined $orig_data->[1] and exists $orig_data->[1]->{'fh'} and defined $orig_data->[1]->{'fh'} ) {
 			$data->{'FH'} = $orig_data->[1]->{'fh'};
 		}
 
@@ -810,14 +807,14 @@ I'm working on improving this by using XS but it will take me some time seeing h
 FUSE doesn't really help because I have to figure out how to get at the filehandle buried deep in it and expose
 it to POE...
 
-If anybody have the time and knowledge, please help me out and we can have fun converting this to XS!
+If anybody have the time and knowledge, please help me out and we can have fun converting this to a pure XS module!
 
 =head3 Debugging
 
 You can enable debug mode which prints out some information ( and especially error messages ) by doing this:
 
-	sub Filesys::Virtual::Async::Dispatcher::DEBUG () { 1 }
-	use Filesys::Virtual::Async::Dispatcher;
+	sub POE::Component::Fuse::DEBUG () { 1 }
+	use POE::Component::Fuse;
 
 
 =head1 EXPORT

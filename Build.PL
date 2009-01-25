@@ -1,6 +1,37 @@
 # Build.PL
 use Module::Build;
 
+my $ver = `fusermount -V 2>&1`;
+my $ver2 = `mount_fusefs -V 2>&1`;
+my $ver3 = `mount_fusefs -V 2>&1 | head -n1`;
+chomp $ver if defined $ver; chomp $ver2 if defined $ver2; chomp $ver3 if defined $ver3;
+$ver =~ s/^.*?version:\s+// if defined $ver;
+$ver2 =~ s/^.*?version:\s+// if defined $ver2;
+$ver3 =~ s/^.*?version\s+// if defined $ver3;
+if (! $ver && ! $ver2 && ! $ver3) {
+	# make CPANPLUS happy and don't report errors if fuse isn't installed
+	die("No support for os: $^O\n",
+		"You need to have fuse-dev (or similar) package installed and have sufficient permissions in order to install this module\n",
+		$^O eq 'darwin' ? ("One option on Mac is http://code.google.com/p/macfuse/\n") : (),
+	);
+}
+if ($ver && $ver + 0 < 2.5) {
+	die "Fuse perl bindings need Linux fuse version 2.5 or newer\n";
+} elsif ($ver2 && $ver2 + 0 < 0.3) {
+	die "Fuse perl bindings need FreeBSD fuse version 0.3 or newer\n";
+} elsif ($^O eq 'darwin' && $ver3 && !(($ver3 ge "0.1.0b006") || ($ver3 eq "0.1.0"))) {
+	# the "ge" string-compare check will match all later revs and all later
+	# betas, but not the final release of the current rev (0.1.0).
+	die "Fuse perl bindings need MacFUSE version 0.1.0b006 or newer, your version is \"$ver3\"\n";
+} else {
+	warn "fuse version found: ", $ver || $ver2 || $ver3, "\n";
+}
+
+my $inc = '-DFUSE_USE_VERSION=25 ' . `pkg-config --cflags fuse` || '-I ../include -D_FILE_OFFSET_BITS=64';
+my $obj = `pkg-config --libs fuse` || '-lfuse';
+$inc .= '-Wall -g -ggdb';
+$inc .= ' -D__FreeBSD__=10 -D_FILE_OFFSET_BITS=64' if $^O eq 'darwin';
+
 my $build = Module::Build->new(
 	# look up Module::Build::API for the info!
 	'dynamic_config'	=> 0,
@@ -23,6 +54,10 @@ my $build = Module::Build->new(
 		'Test::More'			=> '0.86',	# require latest for note() support in t/a_is_prereq_outdated.t
 	},
 
+	# set our XS stuff
+	'extra_compiler_flags'	=> $inc,
+	'extra_linker_flags'	=> $obj,
+
 	'requires'		=> {
 		# POE Stuff
 		'POE'				=> 0,
@@ -33,12 +68,15 @@ my $build = Module::Build->new(
 		'POE::Wheel::Run'		=> 0,
 		'POE::Filter::Reference'	=> 0,
 
-		# FUSE support
-		'Fuse'				=> '0.09',
-
 		# system constants
 		'Errno'				=> 0,
 		'Fcntl'				=> 0,
+		'Config'			=> 0,
+		'Carp'				=> 0,
+		'DynaLoader'			=> 0,
+
+		# to find out stuff about $fh
+		'Scalar::Util'			=> 0,
 	},
 
 	'recommends'		=> {

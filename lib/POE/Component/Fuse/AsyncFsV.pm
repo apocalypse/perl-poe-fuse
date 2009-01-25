@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.01';
+$VERSION = '0.02';
 
 # load the aio helper
 use POE::Component::AIO { no_auto_bootstrap => 1, no_auto_export => 1 };
@@ -13,8 +13,11 @@ use POE::Component::AIO { no_auto_bootstrap => 1, no_auto_export => 1 };
 use POE;
 
 # constants we need to interact with FUSE
-use Errno qw( :POSIX );    # ENOENT EISDIR etc
-use Fcntl qw( :DEFAULT :mode );  # S_IFREG S_IFDIR, O_SYNC O_LARGEFILE etc
+use Errno qw( :POSIX );   	# ENOENT EISDIR etc
+use Fcntl qw( :DEFAULT :mode );	# S_IFREG S_IFDIR, O_SYNC O_LARGEFILE etc
+
+# get the refaddr of our FHs
+use Scalar::Util qw( openhandle );
 
 # creates a new instance
 sub new {
@@ -31,6 +34,11 @@ sub new {
 	}, $class;
 }
 
+# shutdown PoCo-AIO
+sub DESTROY {
+	POE::Component::AIO->new()->shutdown();
+}
+
 # simple accessor
 sub fsv {
 	return shift->{'fsv'};
@@ -43,37 +51,62 @@ sub _cb {
 	# make our custom wrapper
 	my $cb = $poe_kernel->get_active_session->postback( 'reply', $name );
 	my $callback = sub {
-		if ( $_[0] ) {
-			# FUSE needs 0 as retval
-			$cb->( 0 );
+		if ( defined $_[0] ) {
+			# FIXME wtf, IO::AIO returns 0 as successful?
+			if ( $_[0] == 0 ) {
+				# FUSE needs 0 as retval
+				$cb->( 0 );
+			} else {
+				# error code
+				$cb->( $_[0] );
+			}
 		} else {
-			my $retval = $! // -EINVAL();
-			$cb->( $retval );
+			$cb->( -EINVAL() );
 		}
 	};
 
 	return $callback;
 }
 
-sub fuse_getattr {
+sub getattr {
 	my ( $self, $context, $path ) = @_;
 
-	$self->fsv->stat( $path, $poe_kernel->get_active_session->postback( 'reply', 'getattr' ) );
+	# make a special wrapper
+	my $cb = $poe_kernel->get_active_session->postback( 'reply', 'getattr' );
+	my $callback = sub {
+		if ( defined $_[0] ) {
+			if ( ref $_[0] ) {
+				$cb->( @{ $_[0] } );
+			} else {
+				# error code
+				$cb->( $_[0] );
+			}
+		} else {
+			# not found
+			$cb->( -ENOENT() );
+		}
+	};
+
+	$self->fsv->stat( $path, $callback );
 	return;
 }
 
-sub fuse_getdir {
+sub getdir {
 	my ( $self, $context, $path ) = @_;
 
 	# make a special wrapper
 	my $cb = $poe_kernel->get_active_session->postback( 'reply', 'getdir' );
 	my $callback = sub {
 		if ( defined $_[0] ) {
-			# FUSE needs 0 at the end of list to signify success
-			$cb->( @{ $_[0] }, 0 );
+			if ( ref $_[0] ) {
+				# FUSE needs 0 at the end of list to signify success
+				$cb->( @{ $_[0] }, 0 );
+			} else {
+				# error code or empty list = 0
+				$cb->( $_[0] );
+			}
 		} else {
-			my $retval = $! // -EINVAL();
-			$cb->( $retval );
+			$cb->( -EINVAL() );
 		}
 	};
 
@@ -81,40 +114,40 @@ sub fuse_getdir {
 	return;
 }
 
-sub fuse_getxattr {
+sub getxattr {
 	my ( $self, $context, $path, $attr ) = @_;
 
 	# we don't have any extended attribute support
-	$poe_kernel->get_active_session->yield( 'reply', [ 'getxattr' ], [ 0 ] );
+	$poe_kernel->yield( 'reply', [ 'getxattr' ], [ 0 ] );
 	return;
 }
 
-sub fuse_setxattr {
+sub setxattr {
 	my ( $self, $context, $path, $attr, $value, $flags ) = @_;
 
 	# we don't have any extended attribute support
-	$poe_kernel->get_active_session->yield( 'reply', [ 'setxattr' ], [ -ENOSYS() ] );
+	$poe_kernel->yield( 'reply', [ 'setxattr' ], [ -ENOSYS() ] );
 	return;
 
 }
 
-sub fuse_listxattr {
+sub listxattr {
 	my ( $self, $context, $path ) = @_;
 
 	# we don't have any extended attribute support
-	$poe_kernel->get_active_session->yield( 'reply', [ 'listxattr' ], [ 0 ] );
+	$poe_kernel->yield( 'reply', [ 'listxattr' ], [ 0 ] );
 	return;
 }
 
-sub fuse_removexattr {
+sub removexattr {
 	my ( $self, $context, $path, $attr ) = @_;
 
 	# we don't have any extended attribute support
-	$poe_kernel->get_active_session->yield( 'reply', [ 'removexattr' ], [ 0 ] );
+	$poe_kernel->yield( 'reply', [ 'removexattr' ], [ -ENOSYS() ] );
 	return;
 }
 
-sub fuse_open {
+sub open {
 	my ( $self, $context, $path, $flags ) = @_;
 
 	# make a special wrapper
@@ -122,16 +155,19 @@ sub fuse_open {
 	my $callback = sub {
 		my $fh = shift;
 		if ( defined $fh ) {
-			# store it!
-			if ( exists $self->{'fhmap'}->{ fileno( $fh ) } ) {
-				die "internal inconsistency - fh already exists in fhmap!";
+			if ( openhandle( $fh ) ) {
+				# arg, generate our own ID
+				my $id = 0;
+				1 while exists $self->{'fhmap'}->{ ++$id };
+				$self->{'fhmap'}->{ $id } = $fh;
+				$context->{'fh'} = $id;
+				$cb->( 0 );
+			} else {
+				# error code
+				$cb->( $fh );
 			}
-			$self->{'fhmap'}->{ fileno( $fh ) } = $fh;
-			$context->{'fh'} = fileno( $fh );
-			$cb->( 0 );
 		} else {
-			my $retval = $! // -EINVAL();
-			$cb->( $retval );
+			$cb->( -EIO() );
 		}
 	};
 
@@ -147,7 +183,7 @@ sub fuse_open {
 	return;
 }
 
-sub fuse_read {
+sub read {
 	my ( $self, $context, $path, $len, $offset ) = @_;
 
 	# get the fh
@@ -157,13 +193,13 @@ sub fuse_read {
 	}
 
 	if ( ! defined $fh ) {
-		$poe_kernel->get_active_session->yield( 'reply', [ 'read' ], [ -EINVAL() ] );
+		$poe_kernel->yield( 'reply', [ 'read' ], [ -EINVAL() ] );
 	} else {
 		# make our custom wrapper
 		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'read' );
 		my $buf = '';
 		my $callback = sub {
-			if ( $_[0] != $len ) {
+			if ( ! defined $_[0] ) {
 				$cb->( -EIO() );
 			} else {
 				$cb->( $buf );
@@ -177,7 +213,7 @@ sub fuse_read {
 	return;
 }
 
-sub fuse_flush {
+sub flush {
 	my ( $self, $context, $path ) = @_;
 
 	# get the fh
@@ -187,16 +223,16 @@ sub fuse_flush {
 	}
 
 	if ( ! defined $fh ) {
-		$poe_kernel->get_active_session->yield( 'reply', [ 'flush' ], [ -EINVAL() ] );
+		$poe_kernel->yield( 'reply', [ 'flush' ], [ -EINVAL() ] );
 	} else {
-		# FIXME what to do for flush? seems like we need to do nothing...
-		$poe_kernel->get_active_session->yield( 'reply', [ 'flush' ], [ 0 ] );
+		# we map flush to fsync and hope all will be well :)
+		$self->fsv->fsync( $fh, $self->_cb( 'flush' ) );
 	}
 
 	return;
 }
 
-sub fuse_release {
+sub release {
 	my ( $self, $context, $path, $flags ) = @_;
 
 	# get the fh
@@ -208,12 +244,13 @@ sub fuse_release {
 	# FUSE sometimes calls release multiple times per file
 	if ( ! defined $fh ) {
 		# assume success
-		$poe_kernel->get_active_session->yield( 'reply', [ 'release' ], [ 0 ] );
+		$poe_kernel->yield( 'reply', [ 'release' ], [ 0 ] );
 	} else {
 		# make our custom wrapper
 		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'release' );
 		my $callback = sub {
-			if ( $_[0] ) {
+			# FIXME wtf, IO::AIO returns 0 as successful close?
+			if ( $_[0] == 0 ) {
 				# get rid of our mapping
 				if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
 					delete $self->{'fhmap'}->{ $context->{'fh'} };
@@ -222,8 +259,7 @@ sub fuse_release {
 				# FUSE needs 0 as retval
 				$cb->( 0 );
 			} else {
-				my $retval = $! // -EINVAL();
-				$cb->( $retval );
+				$cb->( -EINVAL() );
 			}
 		};
 
@@ -233,14 +269,14 @@ sub fuse_release {
 	return;
 }
 
-sub fuse_truncate {
+sub truncate {
 	my ( $self, $context, $path, $offset ) = @_;
 
 	$self->fsv->truncate( $path, $offset, $self->_cb( 'truncate' ) );
 	return;
 }
 
-sub fuse_write {
+sub write {
 	my ( $self, $context, $path, $buffer, $offset ) = @_;
 
 	# get the fh
@@ -250,16 +286,27 @@ sub fuse_write {
 	}
 
 	if ( ! defined $fh ) {
-		$poe_kernel->get_active_session->yield( 'reply', [ 'write' ], [ -EINVAL() ] );
+		$poe_kernel->yield( 'reply', [ 'write' ], [ -EINVAL() ] );
 	} else {
+		# make a special wrapper
+		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'write' );
+		my $callback = sub {
+			if ( defined $_[0] ) {
+				$cb->( $_[0] );
+			} else {
+				# error
+				$cb->( -EIO() );
+			}
+		};
+
 		# aio_write $fh,$offset,$length, $data,$dataoffset, $callback->($retval)
-		$self->fsv->write( $fh, $offset, length( $buffer ), $buffer, 0, $poe_kernel->get_active_session->postback( 'reply', 'write' ) );
+		$self->fsv->write( $fh, $offset, length( $buffer ), $buffer, 0, $callback );
 	}
 
 	return;
 }
 
-sub fuse_mknod {
+sub mknod {
 	my ( $self, $context, $path, $modes, $device ) = @_;
 
 	# FIXME interesting, ::Async doesn't care about $device...
@@ -267,70 +314,70 @@ sub fuse_mknod {
 	return;
 }
 
-sub fuse_mkdir {
+sub mkdir {
 	my ( $self, $context, $path, $modes ) = @_;
 
 	$self->fsv->mkdir( $path, $modes, $self->_cb( 'mkdir' ) );
 	return;
 }
 
-sub fuse_unlink {
+sub unlink {
 	my ( $self, $context, $path ) = @_;
 
 	$self->fsv->unlink( $path, $self->_cb( 'unlink' ) );
 	return;
 }
 
-sub fuse_rmdir {
+sub rmdir {
 	my ( $self, $context, $path ) = @_;
 
 	$self->fsv->rmdir( $path, $self->_cb( 'rmdir' ) );
 	return;
 }
 
-sub fuse_symlink {
+sub symlink {
 	my ( $self, $context, $path, $symlink ) = @_;
 
 	$self->fsv->symlink( $path, $symlink, $self->_cb( 'symlink' ) );
 	return;
 }
 
-sub fuse_rename {
+sub rename {
 	my ( $self, $context, $path, $newpath ) = @_;
 
 	$self->fsv->rename( $path, $newpath, $self->_cb( 'rename' ) );
 	return;
 }
 
-sub fuse_link {
+sub link {
 	my ( $self, $context, $path, $hardlink ) = @_;
 
 	$self->fsv->link( $path, $hardlink, $self->_cb( 'link' ) );
 	return;
 }
 
-sub fuse_chmod {
+sub chmod {
 	my ( $self, $context, $path, $modes ) = @_;
 
 	$self->fsv->chmod( $path, $modes, $self->_cb( 'chmod' ) );
 	return;
 }
 
-sub fuse_chown {
+sub chown {
 	my ( $self, $context, $path, $uid, $gid ) = @_;
 
 	$self->fsv->chown( $path, $uid, $gid, $self->_cb( 'chown' ) );
 	return;
 }
 
-sub fuse_utime {
+sub utime {
 	my ( $self, $context, $path, $atime, $mtime ) = @_;
 
 	$self->fsv->utime( $path, $atime, $mtime, $self->_cb( 'utime' ) );
 	return;
 }
 
-sub fuse_fsync {
+sub fsync {
 	my ( $self, $context, $path, $fsync_mode ) = @_;
 
 	# get the fh
@@ -340,7 +387,7 @@ sub fuse_fsync {
 	}
 
 	if ( ! defined $fh ) {
-		$poe_kernel->get_active_session->yield( 'reply', [ 'fsync' ], [ -EINVAL() ] );
+		$poe_kernel->yield( 'reply', [ 'fsync' ], [ -EINVAL() ] );
 	} else {
 		# interesting, ::Async don't care about $fsync_mode...
 		$self->fsv->fsync( $fh, $self->_cb( 'fsync' ) );
@@ -349,12 +396,12 @@ sub fuse_fsync {
 	return;
 }
 
-sub fuse_statfs {
+sub statfs {
 	my( $self, $context ) = @_;
 
 	# FIXME fake the data...
 	# $namelen, $files, $files_free, $blocks, $blocks_avail, $blocksize
-	$poe_kernel->get_active_session->yield( 'reply', [ 'statfs' ], [ 255, 1, 1, 1, 1, 2 ] );
+	$poe_kernel->yield( 'reply', [ 'statfs' ], [ 255, 1, 1, 1, 1, 2 ] );
 	return;
 }
 
