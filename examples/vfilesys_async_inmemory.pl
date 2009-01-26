@@ -6,14 +6,7 @@ sub POE::Component::Fuse::DEBUG { 1 }
 
 # loopback to our home directory!
 use Filesys::Virtual::Async::inMemory;
-my $vfs = Filesys::Virtual::Async::inMemory->new(
-	'filesystem'	=> {
-		'/'	=> {
-			mode => oct( '040755' ),
-			ctime => time(),
-		},
-	},
-);
+my $vfs = Filesys::Virtual::Async::inMemory->new;
 
 # load FUSE goodness
 use POE::Component::Fuse;

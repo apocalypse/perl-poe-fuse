@@ -156,14 +156,21 @@ sub fuse_callback {
 
 # End of module
 1;
-
 __END__
 
 =head1 NAME
 
 POE::Component::Fuse::SubProcess - Backend of POE::Component::Fuse
 
+=head1 SYNOPSIS
+
+  Please do not use this module directly.
+
 =head1 ABSTRACT
+
+Please do not use this module directly.
+
+=head1 DESCRIPTION
 
 This module is responsible for implementing the guts of POE::Component::Fuse.
 Namely, the fork/exec and the FUSE eventloop.

@@ -267,7 +267,7 @@ sub _parent : State {
 
 sub shutdown : State {
 	if ( DEBUG ) {
-		warn "received shutdown signal" . ( defined $_[ARG0] ? ' NOW' : '' );
+		warn "received shutdown signal";
 	}
 
 	# okay, let's shutdown now!

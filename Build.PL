@@ -10,19 +10,23 @@ $ver2 =~ s/^.*?version:\s+// if defined $ver2;
 $ver3 =~ s/^.*?version\s+// if defined $ver3;
 if (! $ver && ! $ver2 && ! $ver3) {
 	# make CPANPLUS happy and don't report errors if fuse isn't installed
-	die("No support for os: $^O\n",
+	warn("No support for os: $^O\n",
 		"You need to have fuse-dev (or similar) package installed and have sufficient permissions in order to install this module\n",
 		$^O eq 'darwin' ? ("One option on Mac is http://code.google.com/p/macfuse/\n") : (),
 	);
+	exit 0;
 }
 if ($ver && $ver + 0 < 2.5) {
-	die "Fuse perl bindings need Linux fuse version 2.5 or newer\n";
+	warn "Fuse perl bindings need Linux fuse version 2.5 or newer\n";
+	exit 0;
 } elsif ($ver2 && $ver2 + 0 < 0.3) {
-	die "Fuse perl bindings need FreeBSD fuse version 0.3 or newer\n";
+	warn "Fuse perl bindings need FreeBSD fuse version 0.3 or newer\n";
+	exit 0;
 } elsif ($^O eq 'darwin' && $ver3 && !(($ver3 ge "0.1.0b006") || ($ver3 eq "0.1.0"))) {
 	# the "ge" string-compare check will match all later revs and all later
 	# betas, but not the final release of the current rev (0.1.0).
-	die "Fuse perl bindings need MacFUSE version 0.1.0b006 or newer, your version is \"$ver3\"\n";
+	warn "Fuse perl bindings need MacFUSE version 0.1.0b006 or newer, your version is \"$ver3\"\n";
+	exit 0;
 } else {
 	warn "fuse version found: ", $ver || $ver2 || $ver3, "\n";
 }
