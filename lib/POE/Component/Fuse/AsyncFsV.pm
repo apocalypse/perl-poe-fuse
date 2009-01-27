@@ -52,7 +52,7 @@ sub _cb {
 	my $cb = $poe_kernel->get_active_session->postback( 'reply', $name );
 	my $callback = sub {
 		if ( defined $_[0] ) {
-			# FIXME wtf, IO::AIO returns 0 as successful?
+			# IO::AIO returns 0 as successful...
 			if ( $_[0] == 0 ) {
 				# FUSE needs 0 as retval
 				$cb->( 0 );
@@ -249,7 +249,7 @@ sub release {
 		# make our custom wrapper
 		my $cb = $poe_kernel->get_active_session->postback( 'reply', 'release' );
 		my $callback = sub {
-			# FIXME wtf, IO::AIO returns 0 as successful close?
+			# IO::AIO returns 0 as successful close...
 			if ( $_[0] == 0 ) {
 				# get rid of our mapping
 				if ( exists $self->{'fhmap'}->{ $context->{'fh'} } ) {
@@ -259,7 +259,7 @@ sub release {
 				# FUSE needs 0 as retval
 				$cb->( 0 );
 			} else {
-				$cb->( -EINVAL() );
+				$cb->( $_[0] );
 			}
 		};
 
@@ -309,7 +309,6 @@ sub write {
 sub mknod {
 	my ( $self, $context, $path, $modes, $device ) = @_;
 
-	# FIXME interesting, ::Async doesn't care about $device...
 	$self->fsv->mknod( $path, $modes, $device, $self->_cb( 'mknod' ) );
 	return;
 }
