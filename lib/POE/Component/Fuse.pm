@@ -61,32 +61,6 @@ sub spawn {
 		if ( DEBUG ) {
 			warn 'Using default VFILESYS = false';
 		}
-
-		# setup the session
-		if ( ! exists $opt{'session'} or ! defined $opt{'session'} ) {
-			# if we're running under POE, grab the active session
-			$opt{'session'} = $poe_kernel->get_active_session();
-			if ( ! defined $opt{'session'} or $opt{'session'}->isa( 'POE::Kernel' ) ) {
-				warn 'PoCo-Fuse needs a session to send the callbacks to!';
-				return 0;
-			} else {
-				$opt{'session'} = $opt{'session'}->ID();
-			}
-		} else {
-			# TODO validate for sanity
-		}
-
-		# setup the callback prefix
-		if ( ! exists $opt{'prefix'} or ! defined $opt{'prefix'} ) {
-			if ( DEBUG ) {
-				warn 'Using default event PREFIX = fuse_';
-			}
-
-			# Set the default
-			$opt{'prefix'} = 'fuse_';
-		} else {
-			# TODO validate for sanity
-		}
 	} else {
 		# make sure it's a real object
 		if ( ! ref $opt{'vfilesys'} ) {
@@ -108,12 +82,38 @@ sub spawn {
 				}
 			}
 		}
+	}
 
-		# warn user if they tried to use both vfilesys+session
-		if ( exists $opt{'session'} and defined $opt{'session'} ) {
-			warn 'Setting both VFILESYS+SESSION will not work, choosing VFILESYS over SESSION!';
+	# setup the session
+	if ( ! exists $opt{'session'} or ! defined $opt{'session'} ) {
+		# did we select vfilesys?
+		if ( ! exists $opt{'vfilesys'} ) {
+			# if we're running under POE, grab the active session
+			$opt{'session'} = $poe_kernel->get_active_session();
+			if ( ! defined $opt{'session'} or $opt{'session'}->isa( 'POE::Kernel' ) ) {
+				warn 'PoCo-Fuse needs a session to send the callbacks to!';
+				return 0;
+			} else {
+				$opt{'session'} = $opt{'session'}->ID;
+			}
 		}
-		delete $opt{'session'} if exists $opt{'session'};
+	} else {
+		# TODO validate for sanity
+	}
+
+	# setup the callback prefix
+	if ( ! exists $opt{'prefix'} or ! defined $opt{'prefix'} ) {
+		# do we even need to set this?
+		if ( exists $opt{'session'} ) {
+			if ( DEBUG ) {
+				warn 'Using default event PREFIX = fuse_';
+			}
+
+			# Set the default
+			$opt{'prefix'} = 'fuse_';
+		}
+	} else {
+		# TODO validate for sanity
 	}
 
 	# should we automatically umount?
@@ -209,10 +209,10 @@ sub spawn {
 			'MOUNT'		=> $opt{'mount'},
 			'MOUNTOPTS'	=> $opt{'mountopts'},
 			'UMOUNT'	=> $opt{'umount'},
-			( exists $opt{'session'} ? (	'PREFIX'	=> $opt{'prefix'},
-							'SESSION'	=> $opt{'session'},
-						) : (	'VFILESYS'	=> $opt{'vfilesys'}, )
-			),
+			( exists $opt{'session'} ? ( 'SESSION' => $opt{'session'} ) : () ),
+			( exists $opt{'prefix'} ? ( 'PREFIX' => $opt{'prefix'} ) : () ),
+
+			( exists $opt{'vfilesys'} ? ( 'VFILESYS' => $opt{'vfilesys'} ) : () ),
 
 			# The Wheel::Run object
 			'WHEEL'		=> undef,
@@ -432,13 +432,7 @@ sub wheel_stdout : State {
 		# TODO generate some way of matching request with response when we go multithreaded...
 
 		# vfilesys or session?
-		if ( exists $_[HEAP]->{'SESSION'} ) {
-			# make the postback
-			my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'}, $data->{'CONTEXT'} );
-
-			# send it to the session!
-			$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
-		} else {
+		if ( exists $_[HEAP]->{'VFILESYS'} ) {
 			my $subname = $_[HEAP]->{'VFILESYS'}->can( $data->{'TYPE'} );
 			if ( ! defined $subname ) {
 				$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], [ -EIO() ] );
@@ -450,6 +444,12 @@ sub wheel_stdout : State {
 					$_[KERNEL]->yield( 'reply', [ $data->{'TYPE'}, $data->{'CONTEXT'} ], \@result );
 				}
 			}
+		} else {
+			# make the postback
+			my $postback = $_[SESSION]->postback( 'reply', $data->{'TYPE'}, $data->{'CONTEXT'} );
+
+			# send it to the session!
+			$_[KERNEL]->post( $_[HEAP]->{'SESSION'}, $_[HEAP]->{'PREFIX'} . $data->{'TYPE'}, $postback, $data->{'CONTEXT'}, @{ $data->{'ARGS'} } );
 		}
 	} else {
 		if ( DEBUG ) {
@@ -717,9 +717,10 @@ where the events arrive.
 
 If this option is missing ( or POE is not running ) and "vfilesys" isn't enabled spawn() will return failure.
 
-NOTE: You cannot use this and "vfilesys" at the same time! PoCo-Fuse will pick vfilesys over this!
+NOTE: You cannot use this and "vfilesys" at the same time! PoCo-Fuse will pick vfilesys over this! If this is the
+case, then the session will only get the CLOSE event, not API requests.
 
-The default is: calling session ( if POE is running )
+The default is: calling session ( if POE is running ) when "vfilesys" isn't specified or error
 
 =head3 vfilesys
 
@@ -778,7 +779,7 @@ utime open read write statfs flush release fsync setxattr getxattr listxattr rem
 =head3 CLOSED
 
 This is a special event sent to the session notifying it of component shutdown. As usual, it will be prefixed by the
-prefix set in the options. If you are using the vfilesys option, this will not be sent anywhere.
+prefix set in the options.
 
 The event handler will get one argument, the error string. If you shut down the component, it will be "shutdown",
 otherwise it will contain some error string. A sample handler is below.

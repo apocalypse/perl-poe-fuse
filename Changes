@@ -5,6 +5,7 @@ Revision history for Perl extension POE::Component::Fuse
 	added support for Filesys::Virtual::Async
 	added some more options
 	fixed stupid mode screwup in examples/fuse.pl
+	allowed both session/fvilesys arg but be more smarter about it, so we can inform session of shutdown
 	POD tweaks
 
 * 0.01
