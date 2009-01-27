@@ -7,6 +7,7 @@ Revision history for Perl extension POE::Component::Fuse
 	fixed stupid mode screwup in examples/fuse.pl
 	allowed both session/fvilesys arg but be more smarter about it, so we can inform session of shutdown
 	POD tweaks
+	added "rmdir" option
 
 * 0.01
 

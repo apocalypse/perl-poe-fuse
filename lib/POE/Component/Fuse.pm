@@ -163,6 +163,18 @@ sub spawn {
 		$opt{'mkdir'} = 0;
 	}
 
+	# should we automatically remove the mountpoint?
+	if ( exists $opt{'rmdir'} ) {
+		$opt{'rmdir'} = $opt{'rmdir'} ? 1 : 0;
+	} else {
+		if ( DEBUG ) {
+			warn 'Using default RMDIR = false';
+		}
+
+		# set the default
+		$opt{'rmdir'} = 0;
+	}
+
 	# make sure the mountpoint exists
 	if ( ! -d $opt{'mount'} ) {
 		# does it exist?
@@ -209,6 +221,7 @@ sub spawn {
 			'MOUNT'		=> $opt{'mount'},
 			'MOUNTOPTS'	=> $opt{'mountopts'},
 			'UMOUNT'	=> $opt{'umount'},
+			'RMDIR'		=> $opt{'rmdir'},
 			( exists $opt{'session'} ? ( 'SESSION' => $opt{'session'} ) : () ),
 			( exists $opt{'prefix'} ? ( 'PREFIX' => $opt{'prefix'} ) : () ),
 
@@ -257,6 +270,13 @@ sub _stop : State {
 		# FIXME this is bad because it blocks POE but a good temporary solution :(
 		# FIXME make this portable!
 		system("fusermount -u -z $_[HEAP]->{'MOUNT'} >/dev/null 2>&1");
+	}
+
+	# remove the mountpoint?
+	if ( $_[HEAP]->{'RMDIR'} ) {
+		if ( ! rmdir( $_[HEAP]->{'MOUNT'} ) ) {
+			warn "unable to rmdir mountpoint: $!";
+		}
 	}
 
 	return;
@@ -703,6 +723,13 @@ This basically calls "fusermount -u -z $mountpoint"
 WARNING: This is not exactly portable and is in the testing stage. Feedback would be much appreciated!
 
 The default is: false
+
+=head3 rmdir
+
+If true, PoCo-Fuse will attempt to rmdir the mountpoint on exit/shutdown. Extremely useful when you specify a mountpoint
+that was randomly-generated ( e.x. "/tmp/poe$$" ) so we don't "leave behind" lots of empty directories.
+
+WARNING: Be careful when using this or your directory could vanish!
 
 =head3 prefix
 
