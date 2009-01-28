@@ -1,5 +1,10 @@
 Revision history for Perl extension POE::Component::Fuse
 
+* 0.03
+
+	Removed Makefile.PL auto-generation because it was missing the XS compilation stuff
+	made the optional prereqs a real prereq because I was getting FAILs :(
+
 * 0.02
 
 	added support for Filesys::Virtual::Async

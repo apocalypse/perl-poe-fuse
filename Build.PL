@@ -46,12 +46,11 @@ my $build = Module::Build->new(
 	'dist_author'		=> 'Apocalypse <APOCAL@cpan.org>',
 
 	'create_packlist'	=> 1,
-	'create_makefile_pl'	=> 'traditional',
 	'create_readme'		=> 1,
 
 	'test_files'		=> 't/*.t',
 
-	'add_to_cleanup'	=> [ 'META.yml', 'Makefile.PL', 'README' ],	# automatically generated
+	'add_to_cleanup'	=> [ 'META.yml', 'README' ],	# automatically generated
 
 	'build_requires'	=> {
 		# Test stuff
@@ -81,9 +80,7 @@ my $build = Module::Build->new(
 
 		# to find out stuff about $fh
 		'Scalar::Util'			=> 0,
-	},
 
-	'recommends'		=> {
 		# Filesys::Virtual wrapper
 		'Fuse::Filesys::Virtual'	=> 0,
 
