@@ -1,5 +1,10 @@
 Revision history for Perl extension POE::Component::Fuse
 
+* 0.04
+
+	I mistakenly thought "hv_stores()" was a good API to use, but it was added in perl 5.10!
+		Changed to "hv_store()" so it will work on perl 5.8, thanks agaran!
+
 * 0.03
 
 	Removed Makefile.PL auto-generation because it was missing the XS compilation stuff

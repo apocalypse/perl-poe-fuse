@@ -882,11 +882,11 @@ fuse_get_context()
 	fc = fuse_get_context();
 	if(fc) {
 		HV *hash = newHV();
-		if ( ! hv_stores(hash, "uid", newSViv(fc->uid) ) )
+		if ( ! hv_store(hash, "uid", 3, newSViv(fc->uid), 0 ) )
 			croak( "serious error!" );
-		if ( ! hv_stores(hash, "gid", newSViv(fc->gid) ) )
+		if ( ! hv_store(hash, "gid", 3, newSViv(fc->gid), 0 ) )
 			croak( "serious error!" );
-		if ( ! hv_stores(hash, "pid", newSViv(fc->pid) ) )
+		if ( ! hv_store(hash, "pid", 3, newSViv(fc->pid), 0 ) )
 			croak( "serious error!" );
 
 		/* APOCAL add the fh data if possible */

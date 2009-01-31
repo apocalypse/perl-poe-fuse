@@ -4,7 +4,7 @@ use strict; use warnings;
 
 # Initialize our version
 use vars qw( $VERSION );
-$VERSION = '0.03';
+$VERSION = '0.04';
 
 # load the aio helper
 use POE::Component::AIO { no_auto_bootstrap => 1, no_auto_export => 1 };
