@@ -19,17 +19,12 @@ my $build = Module::Build->new(
 	'dist_author'		=> 'Apocalypse <APOCAL@cpan.org>',
 
 	'create_packlist'	=> 1,
-	'create_makefile_pl'	=> 'passthrough',
+	'create_makefile_pl'	=> 'passthrough',	# not traditional, because it won't compile XS correctly
 	'create_readme'		=> 1,
 
 	'test_files'		=> 't/*.t',
 
 	'add_to_cleanup'	=> [ 'META.yml', 'Makefile.PL', 'README', 'Makefile' ],	# automatically generated
-
-	'build_requires'	=> {
-		# Test stuff
-		'Test::More'			=> '0.86',	# require latest for note() support in t/a_is_prereq_outdated.t
-	},
 
 	# set our XS stuff
 	'extra_compiler_flags'	=> $inc,
