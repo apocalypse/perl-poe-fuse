@@ -216,7 +216,7 @@ sub spawn {
 
 	# Create our session
 	POE::Session->create(
-		__PACKAGE__->inline_states(),
+		__PACKAGE__->inline_states(),	# FIXME stupid Perl::Critic ## no critic ( RequireExplicitInclusion )
 		'heap'	=>	{
 			'ALIAS'		=> $opt{'alias'},
 			'MOUNT'		=> $opt{'mount'},

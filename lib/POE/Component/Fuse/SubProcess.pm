@@ -84,7 +84,7 @@ sub start_fuse {
 		$callbacks{ $cb } = "POE::Component::Fuse::SubProcess::callback_" . $cb;
 
 		# create the sub!
-		eval "sub callback_$cb { return fuse_callback( \$cb, \@_ ) }";
+		eval "sub callback_$cb { return fuse_callback( \$cb, \@_ ) }";	## no critic ( ProhibitStringyEval )
 		if ( $@ ) {
 			die $@;
 		}
