@@ -10,6 +10,7 @@ lib/POE/Component/Fuse/myFuse.xs
 META.yml
 Changes
 Makefile.PL
+LICENSE
 
 ppport.h
 
