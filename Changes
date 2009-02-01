@@ -2,8 +2,10 @@ Revision history for Perl extension POE::Component::Fuse
 
 * 0.04
 
-	I mistakenly thought "hv_stores()" was a good API to use, but it was added in perl 5.10!
-		Changed to "hv_store()" so it will work on perl 5.8, thanks agaran!
+	I mistakenly thought "hv_stores()" was a good API to use, but it was added in perl 5.10! ( thanks agaran! )
+		Added Devel::PPPort functionality via ppport.h, so it's more portable now ( thanks woggle! )
+	Added Module::Build::Compat passthrough functionality, so Makefile.PL *should* work now, ha! ( thanks agaran! )
+	Removed the tons of author tests and replaced with a clean 1-file solution ( Test::Apocalypse )
 
 * 0.03
 

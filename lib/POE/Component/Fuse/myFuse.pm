@@ -1,32 +1,27 @@
+# Declare our package
 package POE::Component::Fuse::myFuse;
+use strict; use warnings;
 
-use 5.006;
-use strict;
-use warnings;
-use Errno;
-use Carp;
-use Config;
+# Initialize our version
+use vars qw( $VERSION );
+$VERSION = '0.04';
 
-require Exporter;
-require DynaLoader;
+# setup our exporting stuff
+use Exporter;
+use DynaLoader;
 our @ISA = qw(Exporter DynaLoader);
-
-# Items to export into callers namespace by default. Note: do not export
-# names by default without a very good reason. Use EXPORT_OK instead.
-# Do not simply export all your public functions/methods/constants.
-
-# This allows declaration	use Fuse ':all';
-# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
-# will save memory.
 our %EXPORT_TAGS = (
 		    'all' => [ qw(fuse_get_context fuse_set_fh) ],
 		    );
 
 our @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-our @EXPORT = ();
-our $VERSION = '0.04';
+# some more requirements
+use Errno;
+use Carp;
+use Config;
 
+# finally, load our XS file
 bootstrap POE::Component::Fuse::myFuse $VERSION;
 
 sub main {
@@ -74,6 +69,8 @@ sub main {
 		}
 	}
 	perl_fuse_main(@otherargs{@otherargs},@subs);
+
+	return;
 }
 
 1;

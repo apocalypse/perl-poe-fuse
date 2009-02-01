@@ -37,6 +37,8 @@ sub new {
 # shutdown PoCo-AIO
 sub DESTROY {
 	POE::Component::AIO->new()->shutdown();
+
+	return;
 }
 
 # simple accessor

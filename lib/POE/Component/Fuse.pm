@@ -11,6 +11,7 @@ use POE;
 use POE::Session;
 use POE::Wheel::Run;
 use POE::Filter::Reference;
+use POE::Filter::Line;
 use base 'POE::Session::AttributeBased';
 
 # get some system constants
@@ -402,6 +403,8 @@ sub wheel_setup : State {
 			'MOUNTOPTS'	=> $_[HEAP]->{'MOUNTOPTS'},
 		} );
 	}
+
+	return;
 }
 
 sub wheel_error : State {
