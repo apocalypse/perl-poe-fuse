@@ -1,5 +1,9 @@
 Revision history for Perl extension POE::Component::Fuse
 
+* 0.05
+
+	Fixed bad Test::Apocalypse check
+
 * 0.04
 
 	I mistakenly thought "hv_stores()" was a good API to use, but it was added in perl 5.10! ( thanks agaran! )
